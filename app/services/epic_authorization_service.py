@@ -66,6 +66,49 @@ class EpicAuthorization:
                     await reminder_btn.click(timeout=1000)
                     btn_ids.remove(action)
 
+    async def _has_hcaptcha_frame(self, timeout_ms: int = 8000) -> bool:
+        selectors = [
+            "iframe[src*='hcaptcha.com']",
+            "iframe[src*='newassets.hcaptcha.com']",
+            "iframe[title*='hCaptcha']",
+        ]
+        for selector in selectors:
+            with suppress(Exception):
+                await self.page.locator(selector).first.wait_for(state="visible", timeout=timeout_ms)
+                return True
+        return False
+
+    async def _solve_captcha_resilient(self, agent: AgentV, max_attempts: int = 2):
+        # 部分场景不会出现挑战框（或已被会话绕过），直接继续登录信号等待。
+        if not await self._has_hcaptcha_frame():
+            logger.debug("No visible hCaptcha frame detected, skip challenge solving")
+            return
+
+        last_err: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await agent.wait_for_challenge()
+                return
+            except Exception as err:
+                last_err = err
+                err_msg = str(err)
+                if not self._is_login_success_signal.empty():
+                    logger.debug("Login success signal received while challenge handler raised; continue flow")
+                    return
+                if (
+                    any(k in err_msg for k in ("NoneType", "AttributeError", "RetryError"))
+                    and attempt < max_attempts
+                ):
+                    logger.warning(
+                        f"Challenge frame detached unexpectedly (attempt {attempt}/{max_attempts}), retrying"
+                    )
+                    await self.page.wait_for_timeout(1200)
+                    agent = AgentV(page=self.page, agent_config=settings)
+                    continue
+                raise
+        if last_err:
+            raise last_err
+
     async def _login(self) -> bool | None:
         # 尽可能早地初始化机器人
         agent = AgentV(page=self.page, agent_config=settings)
@@ -95,7 +138,10 @@ class EpicAuthorization:
             await self.page.click("#sign-in")
 
             # Active hCaptcha challenge
-            await agent.wait_for_challenge()
+            try:
+                await self._solve_captcha_resilient(agent)
+            except Exception as captcha_err:
+                logger.warning(f"Challenge solver raised, continue waiting login signal: {captcha_err}")
 
             # Wait for the page to redirect
             await asyncio.wait_for(self._is_login_success_signal.get(), timeout=60)
