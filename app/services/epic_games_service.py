@@ -180,6 +180,12 @@ class EpicGames:
         self._promotions: List[PromotionGame] = []
 
     @staticmethod
+    def _is_quota_exhausted_error(err: Exception | str) -> bool:
+        msg = str(err)
+        keywords = ("RESOURCE_EXHAUSTED", "429", "quota", "billing details")
+        return any(k in msg for k in keywords)
+
+    @staticmethod
     async def _agree_license(page: Page):
         logger.debug("Agree license")
         with suppress(TimeoutError):
@@ -236,6 +242,12 @@ class EpicGames:
                 logger.debug("Checking for CAPTCHA...")
                 await agent.wait_for_challenge()
             except Exception as e:
+                if self._is_quota_exhausted_error(e):
+                    logger.error(
+                        "Gemini quota exceeded during instant checkout captcha solving (429). "
+                        "Abort current flow to avoid hammering the API."
+                    )
+                    raise
                 logger.info(f"CAPTCHA detection skipped (Likely no CAPTCHA needed): {e}")
 
             try:
@@ -253,6 +265,8 @@ class EpicGames:
             logger.success("Instant checkout flow finished (Blind Success).")
 
         except Exception as err:
+            if self._is_quota_exhausted_error(err):
+                raise
             logger.warning(f"Instant checkout warning (Game might still be claimed): {err}")
             await page.reload()
 
@@ -352,25 +366,36 @@ class EpicGames:
             logger.warning("Failed to empty shopping cart", err=err)
             return False
 
-    async def _purchase_free_game(self):
-        await self.page.goto(URL_CART, wait_until="domcontentloaded")
-        logger.debug("Move ALL paid games from the shopping cart out")
-        await self._empty_cart(self.page)
+    async def _purchase_free_game(self, max_attempts: int = 3):
+        for attempt in range(1, max_attempts + 1):
+            await self.page.goto(URL_CART, wait_until="domcontentloaded")
+            logger.debug("Move ALL paid games from the shopping cart out")
+            await self._empty_cart(self.page)
 
-        agent = AgentV(page=self.page, agent_config=settings)
-        await self.page.click("//button//span[text()='Check Out']")
-        await self._agree_license(self.page)
+            agent = AgentV(page=self.page, agent_config=settings)
+            await self.page.click("//button//span[text()='Check Out']")
+            await self._agree_license(self.page)
 
-        try:
-            logger.debug("Move to webPurchaseContainer iframe")
-            wpc, payment_btn = await self._active_purchase_container(self.page)
-            logger.debug("Click payment button")
-            await self._uk_confirm_order(wpc)
-            await agent.wait_for_challenge()
-        except Exception as err:
-            logger.warning(f"Failed to solve captcha - {err}")
-            await self.page.reload()
-            return await self._purchase_free_game()
+            try:
+                logger.debug("Move to webPurchaseContainer iframe")
+                wpc, payment_btn = await self._active_purchase_container(self.page)
+                logger.debug("Click payment button")
+                await self._uk_confirm_order(wpc)
+                await agent.wait_for_challenge()
+                return
+            except Exception as err:
+                if self._is_quota_exhausted_error(err):
+                    logger.error(
+                        "Gemini quota exceeded during checkout captcha solving (429). "
+                        "Stop retries to avoid repeated quota errors."
+                    )
+                    raise
+
+                logger.warning(f"Failed to solve captcha (attempt {attempt}/{max_attempts}) - {err}")
+                if attempt >= max_attempts:
+                    raise
+                await self.page.reload()
+                await self.page.wait_for_timeout(2000)
 
     @retry(retry=retry_if_exception_type(TimeoutError), stop=stop_after_attempt(2), reraise=True)
     async def collect_weekly_games(self, promotions: List[PromotionGame]):

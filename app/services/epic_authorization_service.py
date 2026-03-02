@@ -26,6 +26,13 @@ class EpicAuthorization:
 
         self._is_login_success_signal = asyncio.Queue()
         self._is_refresh_csrf_signal = asyncio.Queue()
+        self._quota_exhausted = False
+
+    @staticmethod
+    def _is_quota_exhausted_error(err: Exception | str) -> bool:
+        msg = str(err)
+        keywords = ("RESOURCE_EXHAUSTED", "429", "quota", "billing details")
+        return any(k in msg for k in keywords)
 
     async def _on_response_anything(self, r: Response):
         if r.request.method != "POST" or "talon" in r.url:
@@ -151,8 +158,8 @@ class EpicAuthorization:
             logger.success("Right account validation success")
             return True
         except Exception as err:
-            err_msg = str(err)
-            if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+            self._quota_exhausted = self._is_quota_exhausted_error(err)
+            if self._quota_exhausted:
                 logger.error(
                     "Gemini quota exceeded (429 RESOURCE_EXHAUSTED). "
                     "Please check API billing/quota or switch to lower-cost model settings."
@@ -167,6 +174,7 @@ class EpicAuthorization:
         self.page.on("response", self._on_response_anything)
 
         for _ in range(3):
+            self._quota_exhausted = False
             await self.page.goto(URL_CLAIM, wait_until="domcontentloaded")
 
             if "true" == await self.page.locator("//egs-navigation").get_attribute("isloggedin"):
@@ -175,3 +183,7 @@ class EpicAuthorization:
 
             if await self._login():
                 return
+            if self._quota_exhausted:
+                raise RuntimeError(
+                    "Gemini quota exhausted (429). Stop login retries to avoid repeated failures."
+                )
