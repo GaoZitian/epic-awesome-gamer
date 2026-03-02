@@ -39,6 +39,11 @@ class EpicSettings(AgentConfig):
         default=os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
         description="模型名称",
     )
+    
+    ENABLE_AIHUBMIX_PATCH: bool = Field(
+        default_factory=lambda: os.getenv("ENABLE_AIHUBMIX_PATCH", "false").lower() == "true",
+        description="是否启用 AiHubMix monkey patch",
+    )
 
     EPIC_EMAIL: str = Field(default_factory=lambda: os.getenv("EPIC_EMAIL"))
     EPIC_PASSWORD: SecretStr = Field(default_factory=lambda: os.getenv("EPIC_PASSWORD"))
@@ -68,7 +73,13 @@ settings.ignore_request_questions = ["Please drag the crossing to complete the l
 # [方案一修复版] AiHubMix 终极补丁
 # ==========================================
 def _apply_aihubmix_patch():
+    if not settings.ENABLE_AIHUBMIX_PATCH:
+        logger.info("AiHubMix patch disabled")
+        return
     if not settings.GEMINI_API_KEY:
+        return
+    if "generativelanguage.googleapis.com" in settings.GEMINI_BASE_URL:
+        logger.info("Google endpoint detected, skip AiHubMix patch")
         return
 
     try:
