@@ -16,17 +16,21 @@ jobs:
     if: github.repository != '10000ge10000/epic-awesome-gamer'
 
     steps:
-    - name: Debug GEMINI key fingerprint
-  env:
-    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  run: |
-    python - <<'PY'
-import os, hashlib
-k = os.getenv("GEMINI_API_KEY","")
-print("len=", len(k))
-print("sha256_12=", hashlib.sha256(k.encode()).hexdigest()[:12] if k else "EMPTY")
-PY
+      - name: Debug GEMINI key fingerprint
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "GEMINI_API_KEY is EMPTY"
+            exit 1
+          fi
+          echo -n "len="
+          printf "%s" "$GEMINI_API_KEY" | wc -c
+          echo -n "sha256_12="
+          printf "%s" "$GEMINI_API_KEY" | sha256sum | cut -c1-12
 
+    
       - name: Checkout repository
         uses: actions/checkout@v4
 
