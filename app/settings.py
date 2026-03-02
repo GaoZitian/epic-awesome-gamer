@@ -26,17 +26,17 @@ class EpicSettings(AgentConfig):
 
     # [基础配置] AiHubMix 必须使用 SecretStr 类型
     GEMINI_API_KEY: SecretStr | None = Field(
-        default_factory=lambda: os.getenv("GEMINI_API_KEY"),
+        default_factory=lambda: os.getenv("GEMINI_API_KEY") or None,
         description="AiHubMix 的令牌",
     )
     
     GEMINI_BASE_URL: str = Field(
-        default=os.getenv("GEMINI_BASE_URL", "https://aihubmix.com"),
+        default_factory=lambda: os.getenv("GEMINI_BASE_URL") or "https://aihubmix.com",
         description="中转地址",
     )
     
     GEMINI_MODEL: str = Field(
-        default=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        default_factory=lambda: os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
         description="模型名称",
     )
     
