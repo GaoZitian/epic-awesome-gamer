@@ -66,7 +66,7 @@
 | 变量名 | 默认值 | 说明 |
 | :--- | :--- | :--- |
 | `GEMINI_BASE_URL` | `https://aihubmix.com` | 如果使用官方接口，请填 `https://generativelanguage.googleapis.com` |
-| `GEMINI_MODEL` | `gemini-2.5-pro` | 推荐使用 2.5 Pro 或 1.5 Pro，视觉识别能力更强 |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | 默认使用更省额度的模型，稳定性更高 |
 
 ### 4. 启动工作流
 1. 点击仓库上方的 **Actions** 标签页。
@@ -148,6 +148,19 @@ docker compose up -d
 </details>
 
 <details>
+<summary><b>Q: 报错 "429 RESOURCE_EXHAUSTED" 怎么办？</b></summary>
+
+**A:** 这是 Gemini 配额或速率超限，不是登录流程代码崩溃。
+
+* **现象**：日志中出现 `429 RESOURCE_EXHAUSTED`，并在验证码阶段重试后失败。
+* **解决**：
+  * 确认 API Key 对应账号仍有可用额度（Google/AiHubMix 后台）。
+  * 将模型改为更省额度的 `gemini-2.5-flash`。
+  * 下调推理预算（例如 `IMAGE_CLASSIFIER_THINKING_BUDGET=192`、`SPATIAL_POINT_THINKING_BUDGET=256`、`SPATIAL_PATH_THINKING_BUDGET=320`）。
+
+</details>
+
+<details>
 <summary><b>Q: 必须关闭二步验证 (2FA) 吗？</b></summary>
 
 **A:** **是的，必须关闭。**
@@ -168,4 +181,3 @@ docker compose up -d
 <div align="center">
 <b>Enjoy your free games! 🎮</b>
 </div>
-

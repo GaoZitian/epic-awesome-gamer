@@ -105,6 +105,12 @@ class EpicAuthorization:
             logger.success("Right account validation success")
             return True
         except Exception as err:
+            err_msg = str(err)
+            if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+                logger.error(
+                    "Gemini quota exceeded (429 RESOURCE_EXHAUSTED). "
+                    "Please check API billing/quota or switch to lower-cost model settings."
+                )
             logger.warning(f"{err}")
             sr = SCREENSHOTS_DIR.joinpath("authorization")
             sr.mkdir(parents=True, exist_ok=True)

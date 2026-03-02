@@ -20,7 +20,7 @@ services:
       # AiHubMix / Gemini 配置
       # ----------------------------------------
       - GEMINI_BASE_URL=https://aihubmix.com
-      - GEMINI_MODEL=gemini-2.5-pro
+      - GEMINI_MODEL=gemini-2.5-flash
 
       # ----------------------------------------
       # 运行参数
@@ -34,12 +34,12 @@ services:
       - WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS=1500
       - CONSTRAINT_RESPONSE_SCHEMA=true
       - CHALLENGE_CLASSIFIER_MODEL=gemini-2.5-flash
-      - IMAGE_CLASSIFIER_MODEL=gemini-2.5-pro
-      - SPATIAL_POINT_REASONER_MODEL=gemini-2.5-pro
-      - SPATIAL_PATH_REASONER_MODEL=gemini-2.5-pro
-      - IMAGE_CLASSIFIER_THINKING_BUDGET=970
-      - SPATIAL_POINT_THINKING_BUDGET=1387
-      - SPATIAL_PATH_THINKING_BUDGET=1652
+      - IMAGE_CLASSIFIER_MODEL=gemini-2.5-flash
+      - SPATIAL_POINT_REASONER_MODEL=gemini-2.5-flash
+      - SPATIAL_PATH_REASONER_MODEL=gemini-2.5-flash
+      - IMAGE_CLASSIFIER_THINKING_BUDGET=192
+      - SPATIAL_POINT_THINKING_BUDGET=256
+      - SPATIAL_PATH_THINKING_BUDGET=320
 
     volumes:
       - "./volumes/:/app/app/volumes/"
