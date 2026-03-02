@@ -51,6 +51,7 @@ jobs:
           # 在 Actions 中我们依靠 GitHub 的 cron 触发，所以关闭内部调度器
           ENABLE_APSCHEDULER: false
           PYTHONPATH: app
+          ENABLE_AIHUBMIX_PATCH: false
         run: |
           echo "🚀 启动定时领取任务（已适配 AiHubMix 中转）..."
           xvfb-run --auto-servernum --server-num=1 --server-args='-screen 0, 1920x1080x24' uv run app/deploy.py
