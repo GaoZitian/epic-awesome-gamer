@@ -268,7 +268,7 @@ class EpicGames:
             if self._is_quota_exhausted_error(err):
                 raise
             logger.warning(f"Instant checkout warning (Game might still be claimed): {err}")
-            await page.reload(wait_until="domcontentloaded", timeout=60000))
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
 
     async def add_promotion_to_cart(self, page: Page, urls: List[str]) -> bool:
         has_pending_cart_items = False
@@ -394,7 +394,7 @@ class EpicGames:
                 logger.warning(f"Failed to solve captcha (attempt {attempt}/{max_attempts}) - {err}")
                 if attempt >= max_attempts:
                     raise
-                await self.page.reload(wait_until="domcontentloaded", timeout=60000))
+                await self.page.reload(wait_until="domcontentloaded", timeout=60000)
                 await self.page.wait_for_timeout(2000)
 
     @retry(retry=retry_if_exception_type(TimeoutError), stop=stop_after_attempt(2), reraise=True)
