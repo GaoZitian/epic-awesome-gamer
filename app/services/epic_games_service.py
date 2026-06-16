@@ -197,72 +197,123 @@ class EpicGames:
     @staticmethod
     async def _active_purchase_container(page: Page):
         logger.debug("Scanning for purchase iframe...")
-        # Try multiple iframe selectors
+
+        # Wait for potential iframe to load
+        await page.wait_for_timeout(3000)
+
+        # Try multiple iframe selectors (prioritized by likelihood)
         iframe_selectors = [
-            "//iframe[contains(@id, 'webPurchaseContainer') or contains(@src, 'purchase')]",
-            "//iframe[contains(@id, 'purchase') or contains(@src, 'checkout')]",
-            "//iframe[contains(@class, 'purchase') or contains(@class, 'checkout')]",
-            "//iframe[contains(@src, 'store.epicgames.com')]",
+            ("//iframe[@class='']", "empty class"),
+            ("//iframe[contains(@id, 'webPurchaseContainer')]", "webPurchaseContainer id"),
+            ("//iframe[contains(@src, 'purchase')]", "purchase in src"),
+            ("//iframe[contains(@src, 'checkout')]", "checkout in src"),
+            ("//iframe[contains(@src, 'store.epicgames.com')]", "epicgames in src"),
+            ("//iframe[contains(@id, 'purchase')]", "purchase id"),
+            ("//iframe[contains(@class, 'purchase')]", "purchase class"),
         ]
-    
+
         wpc = None
-        for selector in iframe_selectors:
+        matched_selector = None
+        for selector, desc in iframe_selectors:
             try:
-                wpc = page.frame_locator(selector).first
-                # Check if the iframe exists by looking for any content
-                if await wpc.locator("body").count() > 0:
-                    logger.debug(f"✅ Found iframe with selector: {selector}")
-                    break
-                else:
-                    wpc = None
+                locator = page.frame_locator(selector).first
+                body = locator.locator("body")
+                if await body.count() > 0:
+                    buttons = locator.locator("button")
+                    button_count = await buttons.count()
+                    if button_count > 0:
+                        logger.debug(f"✅ Found iframe ({desc}) with {button_count} button(s)")
+                        wpc = locator
+                        matched_selector = desc
+                        break
+                    else:
+                        logger.debug(f"⏭️ Iframe found ({desc}) but no buttons, trying next...")
             except Exception:
-                wpc = None
-    
+                continue
+
+        # Fallback: try any iframe that has buttons
         if not wpc:
-            # Last resort: try any iframe on the page
+            logger.debug("Trying fallback: scan all iframes for buttons...")
             try:
-                all_iframes = page.frame_locator("//iframe")
-                if await all_iframes.locator("body").count() > 0:
-                    wpc = all_iframes.first
-                    logger.debug("✅ Found iframe (fallback: any iframe)")
+                all_frames = page.frames
+                for frame in all_frames:
+                    try:
+                        buttons = frame.locator("button")
+                        if await buttons.count() > 0:
+                            logger.debug(f"✅ Found iframe with buttons: {frame.url}")
+                            wpc = frame
+                            matched_selector = f"frame: {frame.url}"
+                            break
+                    except Exception:
+                        continue
             except Exception:
                 pass
-    
+
         if not wpc:
-            logger.warning("Could not find any purchase iframe")
+            logger.warning("Could not find any purchase iframe with buttons")
+            try:
+                all_frames = page.frames
+                logger.debug(f"Total frames on page: {len(all_frames)}")
+                for i, frame in enumerate(all_frames):
+                    logger.debug(f"  Frame {i}: url={frame.url}, name={frame.name}")
+            except Exception:
+                pass
             raise AssertionError("Could not find purchase iframe")
 
-        logger.debug("Looking for 'PLACE ORDER' button...")
-         # Try multiple button selectors with different text variations
+        logger.debug(f"Looking for payment button in iframe ({matched_selector})...")
+
+        # Try multiple button selectors with different text variations
         button_selectors = [
+            # Text-based selectors
             ("button", "PLACE ORDER"),
             ("button", "Place Order"),
             ("button", "PLACE ORDER NOW"),
             ("button", "Pay Now"),
+            ("button", "PAY NOW"),
             ("button", "Confirm Order"),
+            ("button", "CONFIRM"),
+            ("button", "Confirm"),
             ("button", "Complete Order"),
             ("button", "Place order"),
-            ("//button[contains(@class, 'payment-confirm__btn')]", None),
+            # CSS class-based selectors
+            ("//button[contains(@class, 'payment-confirm')]", None),
             ("//button[contains(@class, 'payment-btn--primary')]", None),
             ("//button[contains(@class, 'confirm')]", None),
             ("//button[contains(@class, 'pay')]", None),
-            ("//button[contains(@class, 'order')]", None),
-            ("//div[contains(@class, 'payment-order-confirm')]", None),
+            ("//div[contains(@class, 'payment-order-confirm')]//button", None),
+            # Data attribute selectors
+            ("//button[@data-testid='place-order-button']", None),
+            ("//button[@data-testid='confirm-order-button']", None),
+            # Any primary-looking button
+            ("//button[contains(@class, 'primary')]", None),
+            ("//button[contains(@class, 'cta')]", None),
         ]
-    
+
         for selector, text in button_selectors:
             try:
                 if text:
                     btn = wpc.locator(selector, has_text=text)
                 else:
                     btn = wpc.locator(selector)
-            
+
                 if await btn.is_visible(timeout=3000):
-                    logger.debug(f"✅ Found button with selector: {selector}, text: {text}")
+                    btn_text = await btn.text_content() or "unknown"
+                    logger.debug(f"✅ Found button: '{btn_text}' (selector: {selector})")
                     return wpc, btn
             except Exception:
                 continue
-    
+
+        # Last resort: find any visible button in the iframe
+        logger.debug("Trying to find any visible button in iframe...")
+        try:
+            any_button = wpc.locator("button").first
+            if await any_button.is_visible(timeout=3000):
+                btn_text = await any_button.text_content() or "unknown"
+                logger.debug(f"✅ Found any button: '{btn_text}'")
+                return wpc, any_button
+        except Exception:
+            pass
+
         logger.warning("Primary buttons not found in iframe.")
         raise AssertionError("Could not find Place Order button in iframe")
 
@@ -279,9 +330,14 @@ class EpicGames:
         logger.info("🚀 Triggering Instant Checkout Flow...")
         agent = AgentV(page=page, agent_config=settings)
 
+        # Wait for checkout dialog/iframe to appear
+        logger.debug("Waiting for checkout UI to load...")
+        await page.wait_for_timeout(5000)
+
         try:
             wpc, payment_btn = await self._active_purchase_container(page)
-            logger.debug(f"Clicking payment button: {await payment_btn.text_content()}")
+            btn_text = await payment_btn.text_content() or "unknown"
+            logger.debug(f"Clicking payment button: '{btn_text}'")
             await payment_btn.click(force=True)
             await page.wait_for_timeout(3000)
             
@@ -314,7 +370,32 @@ class EpicGames:
         except Exception as err:
             if self._is_quota_exhausted_error(err):
                 raise
-            logger.warning(f"Instant checkout warning (Game might still be claimed): {err}")
+            logger.warning(f"Instant checkout failed: {err}")
+            logger.info("Trying alternative: Add to cart and checkout from cart page...")
+            
+            # Try to add to cart as fallback
+            try:
+                add_to_cart_btn = page.locator("//button[@data-testid='add-to-cart-cta-button']")
+                if await add_to_cart_btn.is_visible(timeout=3000):
+                    await add_to_cart_btn.click()
+                    logger.debug("Added to cart via fallback")
+                    await page.wait_for_timeout(2000)
+                    return
+            except Exception:
+                pass
+            
+            # If add to cart didn't work, try to find and click any checkout button
+            try:
+                checkout_btn = page.locator("//button[contains(text(), 'Check Out') or contains(text(), 'Checkout')]")
+                if await checkout_btn.is_visible(timeout=3000):
+                    await checkout_btn.click()
+                    logger.debug("Clicked checkout button")
+                    await page.wait_for_timeout(2000)
+                    return
+            except Exception:
+                pass
+            
+            logger.warning("All checkout methods failed, continuing...")
             try:
                 await page.reload(wait_until="commit", timeout=60000)
             except Exception:
@@ -344,11 +425,11 @@ class EpicGames:
             # 🔥 新思路：彻底解决按钮识别问题 (黑名单机制 + 智能点击)
             # ------------------------------------------------------------
             
-            # 1. 尝试找到所有可能的“主按钮”
+            # 1. 尝试找到所有可能的"主按钮"
             # Epic 按钮通常有 'purchase-cta-button' 这个 TestID
             purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
 
-            # 2. 如果没找到主按钮，尝试找“库中”状态
+            # 2. 如果没找到主按钮，尝试找"库中"状态
             try:
                 if not await purchase_btn.is_visible(timeout=5000):
                     # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
