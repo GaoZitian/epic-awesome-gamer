@@ -197,10 +197,10 @@ class EpicGames:
     @staticmethod
     async def _active_purchase_container(page: Page):
         logger.debug("Scanning for purchase iframe...")
-
+        
         # Wait for potential iframe to load
         await page.wait_for_timeout(3000)
-
+        
         # Try multiple iframe selectors (prioritized by likelihood)
         iframe_selectors = [
             ("//iframe[@class='']", "empty class"),
@@ -211,14 +211,16 @@ class EpicGames:
             ("//iframe[contains(@id, 'purchase')]", "purchase id"),
             ("//iframe[contains(@class, 'purchase')]", "purchase class"),
         ]
-
+        
         wpc = None
         matched_selector = None
         for selector, desc in iframe_selectors:
             try:
                 locator = page.frame_locator(selector).first
+                # Check if iframe has meaningful content (buttons or divs)
                 body = locator.locator("body")
                 if await body.count() > 0:
+                    # Check if there's any interactive content
                     buttons = locator.locator("button")
                     button_count = await buttons.count()
                     if button_count > 0:
@@ -230,7 +232,7 @@ class EpicGames:
                         logger.debug(f"⏭️ Iframe found ({desc}) but no buttons, trying next...")
             except Exception:
                 continue
-
+        
         # Fallback: try any iframe that has buttons
         if not wpc:
             logger.debug("Trying fallback: scan all iframes for buttons...")
@@ -241,6 +243,7 @@ class EpicGames:
                         buttons = frame.locator("button")
                         if await buttons.count() > 0:
                             logger.debug(f"✅ Found iframe with buttons: {frame.url}")
+                            # Store the frame for later use
                             wpc = frame
                             matched_selector = f"frame: {frame.url}"
                             break
@@ -248,9 +251,10 @@ class EpicGames:
                         continue
             except Exception:
                 pass
-
+        
         if not wpc:
             logger.warning("Could not find any purchase iframe with buttons")
+            # Debug: list all iframes on page
             try:
                 all_frames = page.frames
                 logger.debug(f"Total frames on page: {len(all_frames)}")
@@ -259,12 +263,30 @@ class EpicGames:
             except Exception:
                 pass
             raise AssertionError("Could not find purchase iframe")
-
+        
         logger.debug(f"Looking for payment button in iframe ({matched_selector})...")
+
+        # Debug: print all buttons in iframe
+        try:
+            all_buttons = wpc.locator("button")
+            btn_count = await all_buttons.count()
+            logger.debug(f"Total buttons in iframe: {btn_count}")
+            for i in range(min(btn_count, 10)):
+                try:
+                    btn = all_buttons.nth(i)
+                    btn_text = await btn.text_content() or ""
+                    btn_class = await btn.get_attribute("class") or ""
+                    btn_testid = await btn.get_attribute("data-testid") or ""
+                    btn_visible = await btn.is_visible()
+                    logger.debug(f"  Button {i}: text='{btn_text.strip()[:50]}', class='{btn_class[:80]}', testid='{btn_testid}', visible={btn_visible}")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Could not enumerate buttons: {e}")
 
         # Try multiple button selectors with different text variations
         button_selectors = [
-            # Text-based selectors
+            # Text-based selectors (English)
             ("button", "PLACE ORDER"),
             ("button", "Place Order"),
             ("button", "PLACE ORDER NOW"),
@@ -275,6 +297,9 @@ class EpicGames:
             ("button", "Confirm"),
             ("button", "Complete Order"),
             ("button", "Place order"),
+            ("button", "Get"),
+            ("button", "BUY"),
+            ("button", "Buy"),
             # CSS class-based selectors
             ("//button[contains(@class, 'payment-confirm')]", None),
             ("//button[contains(@class, 'payment-btn--primary')]", None),
@@ -295,7 +320,7 @@ class EpicGames:
                     btn = wpc.locator(selector, has_text=text)
                 else:
                     btn = wpc.locator(selector)
-
+                
                 if await btn.is_visible(timeout=3000):
                     btn_text = await btn.text_content() or "unknown"
                     logger.debug(f"✅ Found button: '{btn_text}' (selector: {selector})")
@@ -314,6 +339,16 @@ class EpicGames:
         except Exception:
             pass
 
+        # Ultra fallback: try clicking the first button even if not "visible"
+        logger.debug("Ultra fallback: trying to click first button with force...")
+        try:
+            first_button = wpc.locator("button").first
+            btn_text = await first_button.text_content() or "unknown"
+            logger.debug(f"Clicking button: '{btn_text}'")
+            return wpc, first_button
+        except Exception:
+            pass
+        
         logger.warning("Primary buttons not found in iframe.")
         raise AssertionError("Could not find Place Order button in iframe")
 
@@ -380,6 +415,7 @@ class EpicGames:
                     await add_to_cart_btn.click()
                     logger.debug("Added to cart via fallback")
                     await page.wait_for_timeout(2000)
+                    # The cart-based checkout will be handled by the caller
                     return
             except Exception:
                 pass
@@ -425,11 +461,11 @@ class EpicGames:
             # 🔥 新思路：彻底解决按钮识别问题 (黑名单机制 + 智能点击)
             # ------------------------------------------------------------
             
-            # 1. 尝试找到所有可能的"主按钮"
+            # 1. 尝试找到所有可能的“主按钮”
             # Epic 按钮通常有 'purchase-cta-button' 这个 TestID
             purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
 
-            # 2. 如果没找到主按钮，尝试找"库中"状态
+            # 2. 如果没找到主按钮，尝试找“库中”状态
             try:
                 if not await purchase_btn.is_visible(timeout=5000):
                     # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
