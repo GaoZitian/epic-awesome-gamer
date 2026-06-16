@@ -197,27 +197,74 @@ class EpicGames:
     @staticmethod
     async def _active_purchase_container(page: Page):
         logger.debug("Scanning for purchase iframe...")
-        iframe_selector = "//iframe[contains(@id, 'webPurchaseContainer') or contains(@src, 'purchase')]"
-        wpc = page.frame_locator(iframe_selector).first
+        # Try multiple iframe selectors
+        iframe_selectors = [
+            "//iframe[contains(@id, 'webPurchaseContainer') or contains(@src, 'purchase')]",
+            "//iframe[contains(@id, 'purchase') or contains(@src, 'checkout')]",
+            "//iframe[contains(@class, 'purchase') or contains(@class, 'checkout')]",
+            "//iframe[contains(@src, 'store.epicgames.com')]",
+        ]
+    
+        wpc = None
+        for selector in iframe_selectors:
+            try:
+                wpc = page.frame_locator(selector).first
+                # Check if the iframe exists by looking for any content
+                if await wpc.locator("body").count() > 0:
+                    logger.debug(f"✅ Found iframe with selector: {selector}")
+                    break
+                else:
+                    wpc = None
+            except Exception:
+                wpc = None
+    
+        if not wpc:
+            # Last resort: try any iframe on the page
+            try:
+                all_iframes = page.frame_locator("//iframe")
+                if await all_iframes.locator("body").count() > 0:
+                    wpc = all_iframes.first
+                    logger.debug("✅ Found iframe (fallback: any iframe)")
+            except Exception:
+                pass
+    
+        if not wpc:
+            logger.warning("Could not find any purchase iframe")
+            raise AssertionError("Could not find purchase iframe")
 
         logger.debug("Looking for 'PLACE ORDER' button...")
-        place_order_btn = wpc.locator("button", has_text="PLACE ORDER")
-        confirm_btn = wpc.locator("//button[contains(@class, 'payment-confirm__btn')]")
-        
-        try:
-            await expect(place_order_btn).to_be_visible(timeout=15000)
-            logger.debug("✅ Found 'PLACE ORDER' button via text match")
-            return wpc, place_order_btn
-        except AssertionError:
-            pass
+         # Try multiple button selectors with different text variations
+        button_selectors = [
+            ("button", "PLACE ORDER"),
+            ("button", "Place Order"),
+            ("button", "PLACE ORDER NOW"),
+            ("button", "Pay Now"),
+            ("button", "Confirm Order"),
+            ("button", "Complete Order"),
+            ("button", "Place order"),
+            ("//button[contains(@class, 'payment-confirm__btn')]", None),
+            ("//button[contains(@class, 'payment-btn--primary')]", None),
+            ("//button[contains(@class, 'confirm')]", None),
+            ("//button[contains(@class, 'pay')]", None),
+            ("//button[contains(@class, 'order')]", None),
+            ("//div[contains(@class, 'payment-order-confirm')]", None),
+        ]
+    
+        for selector, text in button_selectors:
+            try:
+                if text:
+                    btn = wpc.locator(selector, has_text=text)
+                else:
+                    btn = wpc.locator(selector)
             
-        try:
-            await expect(confirm_btn).to_be_visible(timeout=5000)
-            logger.debug("✅ Found button via CSS class match")
-            return wpc, confirm_btn
-        except AssertionError:
-            logger.warning("Primary buttons not found in iframe.")
-            raise AssertionError("Could not find Place Order button in iframe")
+                if await btn.is_visible(timeout=3000):
+                    logger.debug(f"✅ Found button with selector: {selector}, text: {text}")
+                    return wpc, btn
+            except Exception:
+                continue
+    
+        logger.warning("Primary buttons not found in iframe.")
+        raise AssertionError("Could not find Place Order button in iframe")
 
     @staticmethod
     async def _uk_confirm_order(wpc: FrameLocator):
