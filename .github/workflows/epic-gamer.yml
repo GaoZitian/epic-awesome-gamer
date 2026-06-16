@@ -63,10 +63,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL != '' && secrets.GEMINI_BASE_URL || 'https://aihubmix.com' }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          CHALLENGE_CLASSIFIER_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          IMAGE_CLASSIFIER_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          SPATIAL_POINT_REASONER_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
-          SPATIAL_PATH_REASONER_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          CHALLENGE_CLASSIFIER_MODEL: gemini-2.5-flash
+          IMAGE_CLASSIFIER_MODEL: gemini-2.5-flash
+          SPATIAL_POINT_REASONER_MODEL: gemini-2.5-flash
+          SPATIAL_PATH_REASONER_MODEL: gemini-2.5-flash
           IMAGE_CLASSIFIER_THINKING_BUDGET: 192
           SPATIAL_POINT_THINKING_BUDGET: 256
           SPATIAL_PATH_THINKING_BUDGET: 320
