@@ -287,6 +287,9 @@ class EpicGames:
         # Try multiple button selectors with different text variations
         button_selectors = [
             # Text-based selectors (English)
+            ("button", "Add to library"),
+            ("button", "ADD TO LIBRARY"),
+            ("button", "Add To Library"),
             ("button", "PLACE ORDER"),
             ("button", "Place Order"),
             ("button", "PLACE ORDER NOW"),
@@ -328,24 +331,30 @@ class EpicGames:
             except Exception:
                 continue
 
-        # Last resort: find any visible button in the iframe
+        # Last resort: find any visible button in the iframe (prefer non-empty text)
         logger.debug("Trying to find any visible button in iframe...")
         try:
-            any_button = wpc.locator("button").first
-            if await any_button.is_visible(timeout=3000):
-                btn_text = await any_button.text_content() or "unknown"
-                logger.debug(f"✅ Found any button: '{btn_text}'")
-                return wpc, any_button
-        except Exception:
-            pass
-
-        # Ultra fallback: try clicking the first button even if not "visible"
-        logger.debug("Ultra fallback: trying to click first button with force...")
-        try:
-            first_button = wpc.locator("button").first
-            btn_text = await first_button.text_content() or "unknown"
-            logger.debug(f"Clicking button: '{btn_text}'")
-            return wpc, first_button
+            all_buttons = wpc.locator("button")
+            btn_count = await all_buttons.count()
+            for i in range(btn_count):
+                try:
+                    btn = all_buttons.nth(i)
+                    if await btn.is_visible(timeout=2000):
+                        btn_text = await btn.text_content() or ""
+                        if btn_text.strip():  # Prefer button with text
+                            logger.debug(f"✅ Found visible button with text: '{btn_text.strip()}'")
+                            return wpc, btn
+                except Exception:
+                    continue
+            # If no button with text, try first visible button
+            for i in range(btn_count):
+                try:
+                    btn = all_buttons.nth(i)
+                    if await btn.is_visible(timeout=2000):
+                        logger.debug(f"✅ Found any visible button (index {i})")
+                        return wpc, btn
+                except Exception:
+                    continue
         except Exception:
             pass
         
