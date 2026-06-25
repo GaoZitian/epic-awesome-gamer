@@ -3,8 +3,8 @@ name: Epic Awesome Gamer (Scheduled AiHubMix)
 on:
   workflow_dispatch: # 手动触发
   schedule:
-    # 每天 UTC 08:00 (北京时间 16:00) 运行一次
-    - cron: '0 8 * * *'
+    # 每天 UTC 05:00 (北京时间 13:00) 运行一次
+    - cron: '0 5 * * *'
 
 jobs:
   epic-gamer:
