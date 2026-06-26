@@ -113,8 +113,27 @@ class EpicAgent:
             return
         completed_orders: List[OrderItem] = []
         try:
-            await self.page.goto("https://www.epicgames.com/account/v2/payment/ajaxGetOrderHistory")
-            text_content = await self.page.text_content("//pre")
+            await self.page.goto(
+                "https://www.epicgames.com/account/v2/payment/ajaxGetOrderHistory",
+                wait_until="domcontentloaded",
+                timeout=30000
+            )
+            # Try multiple selectors for the order data
+            text_content = None
+            selectors = ["//pre", "//body", "pre", "body"]
+            for selector in selectors:
+                try:
+                    elem = self.page.locator(selector).first
+                    text_content = await elem.text_content(timeout=10000)
+                    if text_content and text_content.strip():
+                        break
+                except Exception:
+                    continue
+            
+            if not text_content:
+                logger.warning("Could not find order history text content")
+                return
+            
             data = json.loads(text_content)
             for _order in data["orders"]:
                 order = Order(**_order)
@@ -124,8 +143,10 @@ class EpicAgent:
                     if not item.namespace or len(item.namespace) != 32:
                         continue
                     completed_orders.append(item)
+        except json.JSONDecodeError as err:
+            logger.warning(f"Failed to parse order history JSON: {err}")
         except Exception as err:
-            logger.warning(err)
+            logger.warning(f"Failed to sync order history: {err}")
         self._orders = completed_orders
 
     async def _check_orders(self):
@@ -197,10 +218,10 @@ class EpicGames:
     @staticmethod
     async def _active_purchase_container(page: Page):
         logger.debug("Scanning for purchase iframe...")
-        
+
         # Wait for potential iframe to load
         await page.wait_for_timeout(3000)
-        
+
         # Try multiple iframe selectors (prioritized by likelihood)
         iframe_selectors = [
             ("//iframe[@class='']", "empty class"),
@@ -211,16 +232,14 @@ class EpicGames:
             ("//iframe[contains(@id, 'purchase')]", "purchase id"),
             ("//iframe[contains(@class, 'purchase')]", "purchase class"),
         ]
-        
+
         wpc = None
         matched_selector = None
         for selector, desc in iframe_selectors:
             try:
                 locator = page.frame_locator(selector).first
-                # Check if iframe has meaningful content (buttons or divs)
                 body = locator.locator("body")
                 if await body.count() > 0:
-                    # Check if there's any interactive content
                     buttons = locator.locator("button")
                     button_count = await buttons.count()
                     if button_count > 0:
@@ -232,7 +251,7 @@ class EpicGames:
                         logger.debug(f"⏭️ Iframe found ({desc}) but no buttons, trying next...")
             except Exception:
                 continue
-        
+
         # Fallback: try any iframe that has buttons
         if not wpc:
             logger.debug("Trying fallback: scan all iframes for buttons...")
@@ -243,7 +262,6 @@ class EpicGames:
                         buttons = frame.locator("button")
                         if await buttons.count() > 0:
                             logger.debug(f"✅ Found iframe with buttons: {frame.url}")
-                            # Store the frame for later use
                             wpc = frame
                             matched_selector = f"frame: {frame.url}"
                             break
@@ -251,10 +269,9 @@ class EpicGames:
                         continue
             except Exception:
                 pass
-        
+
         if not wpc:
             logger.warning("Could not find any purchase iframe with buttons")
-            # Debug: list all iframes on page
             try:
                 all_frames = page.frames
                 logger.debug(f"Total frames on page: {len(all_frames)}")
@@ -263,7 +280,7 @@ class EpicGames:
             except Exception:
                 pass
             raise AssertionError("Could not find purchase iframe")
-        
+
         logger.debug(f"Looking for payment button in iframe ({matched_selector})...")
 
         # Debug: print all buttons in iframe
@@ -424,7 +441,6 @@ class EpicGames:
                     await add_to_cart_btn.click()
                     logger.debug("Added to cart via fallback")
                     await page.wait_for_timeout(2000)
-                    # The cart-based checkout will be handled by the caller
                     return
             except Exception:
                 pass
@@ -470,11 +486,11 @@ class EpicGames:
             # 🔥 新思路：彻底解决按钮识别问题 (黑名单机制 + 智能点击)
             # ------------------------------------------------------------
             
-            # 1. 尝试找到所有可能的“主按钮”
+            # 1. 尝试找到所有可能的"主按钮"
             # Epic 按钮通常有 'purchase-cta-button' 这个 TestID
             purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
 
-            # 2. 如果没找到主按钮，尝试找“库中”状态
+            # 2. 如果没找到主按钮，尝试找"库中"状态
             try:
                 if not await purchase_btn.is_visible(timeout=5000):
                     # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
