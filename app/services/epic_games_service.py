@@ -475,20 +475,44 @@ class EpicGames:
             purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
 
             # 2. 如果没找到主按钮，尝试找“库中”状态
+            btn_visible = False
             try:
-                if not await purchase_btn.is_visible(timeout=5000):
-                    # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
-                    all_text = await page.locator("body").text_content()
+                btn_visible = await purchase_btn.is_visible(timeout=5000)
+            except Exception:
+                btn_visible = False
+
+            if not btn_visible:
+                # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
+                try:
+                    all_text = await page.locator("body").text_content(timeout=5000)
                     if "In Library" in all_text or "Owned" in all_text:
                          logger.success(f"Already in the library (Page Text Scan) - {url=}")
                          continue
+                except Exception:
+                    pass
+                # 3b. 尝试在 iframe 中查找按钮
+                try:
+                    for frame in page.frames:
+                        if frame == page.main_frame:
+                            continue
+                        iframe_btn = frame.locator("//button[@data-testid='purchase-cta-button']").first
+                        if await iframe_btn.is_visible(timeout=3000):
+                            purchase_btn = iframe_btn
+                            btn_visible = True
+                            logger.debug(f"Found purchase button in iframe: {frame.url}")
+                            break
+                except Exception:
+                    pass
+
+                if not btn_visible:
                     logger.warning(f"Could not find any purchase button - {url=}")
                     continue
-            except Exception:
-                pass
 
             # 3. 获取按钮文字
-            btn_text = await purchase_btn.text_content()
+            try:
+                btn_text = await purchase_btn.text_content(timeout=5000)
+            except Exception:
+                btn_text = ""
             if not btn_text: btn_text = ""
             btn_text_upper = btn_text.strip().upper()
             
