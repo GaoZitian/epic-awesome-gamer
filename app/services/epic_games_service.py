@@ -462,6 +462,13 @@ class EpicGames:
         for url in urls:
             await page.goto(url, wait_until="load")
 
+            # 等待页面 JS 渲染完成 (SPA 需要额外等待)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(3000)
+
             # 404 检测
             title = await page.title()
             if "404" in title or "Page Not Found" in title:
@@ -477,70 +484,66 @@ class EpicGames:
                 pass 
 
             # ------------------------------------------------------------
-            # 🔥 新思路：彻底解决按钮识别问题 (黑名单机制 + 智能点击)
+            # 🔥 按钮识别与状态判断
             # ------------------------------------------------------------
-            
-            # 1. 尝试多种选择器找到购买按钮
-            # Epic Games 商店按钮选择器 (按优先级排列)
+
+            # 1. 尝试找到主按钮 (多种选择器容错)
             purchase_btn = None
             btn_visible = False
-            
-            # 选择器列表：尝试多种可能的按钮选择器
+
             selectors = [
-                # 原始选择器
                 "//button[@data-testid='purchase-cta-button']",
-                # 新版 Epic Games 商店可能使用的其他选择器
                 "//button[contains(@data-testid, 'purchase')]",
                 "//button[contains(@data-testid, 'add-to-cart')]",
                 "//button[contains(@data-testid, 'buy')]",
                 "//button[contains(@data-testid, 'get')]",
-                # 基于文本内容的选择器
-                "//button[.//span[contains(text(), 'Get')]]",
-                "//button[.//span[contains(text(), 'Add to Cart')]]",
-                "//button[.//span[contains(text(), 'Free')]]",
-                "//button[.//span[contains(text(), 'Claim')]]",
-                # 通用按钮选择器 (包含特定类名)
-                "//button[contains(@class, 'purchase')]",
-                "//button[contains(@class, 'add-to-cart')]",
-                "//button[contains(@class, 'buy')]",
+                "//button[.//span[text()='Get']]",
+                "//button[.//span[text()='Add to Cart']]",
+                "//button[.//span[text()='Add To Cart']]",
+                "//button[.//span[text()='Free']]",
+                "//button[.//span[text()='Claim']]",
             ]
-            
-            # 尝试每个选择器
+
             for selector in selectors:
                 try:
                     btn = page.locator(selector).first
-                    if await btn.is_visible(timeout=2000):
+                    if await btn.is_visible(timeout=3000):
                         purchase_btn = btn
                         btn_visible = True
                         logger.debug(f"Found purchase button with selector: {selector}")
                         break
                 except Exception:
                     continue
-            
-            # 2. 如果没找到主按钮，尝试找"库中"状态
+
+            # 2. 如果没找到主按钮，检查页面状态
             if not btn_visible:
-                # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
                 try:
                     all_text = await page.locator("body").text_content(timeout=5000)
-                    if "In Library" in all_text or "Owned" in all_text:
-                         logger.success(f"Already in the library (Page Text Scan) - {url=}")
-                         continue
                 except Exception:
-                    pass
-                
-                # 3b. 尝试在 iframe 中查找按钮
+                    all_text = ""
+
+                # 已在库中
+                if "In Library" in all_text or "Owned" in all_text:
+                    logger.success(f"✅ Game already in library - {url=}")
+                    continue
+
+                # 地区/平台不可用
+                if "unavailable" in all_text.lower() or "当前无法" in all_text:
+                    logger.warning(f"⚠️ Game unavailable in this region - {url=}")
+                    continue
+
+                # 尝试在 iframe 中查找按钮
                 try:
                     for frame in page.frames:
                         if frame == page.main_frame:
                             continue
-                        # 在 iframe 中也尝试多种选择器
                         for selector in selectors:
                             try:
                                 iframe_btn = frame.locator(selector).first
-                                if await iframe_btn.is_visible(timeout=2000):
+                                if await iframe_btn.is_visible(timeout=3000):
                                     purchase_btn = iframe_btn
                                     btn_visible = True
-                                    logger.debug(f"Found purchase button in iframe: {frame.url} with selector: {selector}")
+                                    logger.debug(f"Found purchase button in iframe: {frame.url}")
                                     break
                             except Exception:
                                 continue
@@ -550,22 +553,29 @@ class EpicGames:
                     pass
 
                 if not btn_visible:
-                    # 添加调试信息：打印页面上的所有按钮
-                    try:
-                        all_buttons = await page.locator("button").all()
-                        button_texts = []
-                        for btn in all_buttons:
-                            try:
-                                text = await btn.text_content()
-                                if text and text.strip():
-                                    button_texts.append(text.strip())
-                            except:
-                                pass
-                        logger.warning(f"Could not find any purchase button - {url=}")
-                        logger.debug(f"Page buttons found: {button_texts[:10]}")  # 只显示前10个
-                    except Exception:
-                        logger.warning(f"Could not find any purchase button - {url=}")
+                    logger.warning(f"⚠️ Could not find any purchase button - {url=}")
                     continue
+
+            # 3. 检查按钮是否被禁用 (已在库中)
+            is_disabled = False
+            try:
+                is_disabled = await purchase_btn.is_disabled()
+            except Exception:
+                pass
+
+            if is_disabled:
+                logger.success(f"✅ Button disabled (already owned) - {url=}")
+                continue
+
+            # 4. 获取按钮文字
+            try:
+                btn_text = await purchase_btn.text_content(timeout=5000)
+            except Exception:
+                btn_text = ""
+            if not btn_text: btn_text = ""
+            btn_text_upper = btn_text.strip().upper()
+
+            logger.debug(f"👉 Found Button: '{btn_text}'")
 
             # 3. 获取按钮文字
             try:
