@@ -417,15 +417,25 @@ class EpicGames:
             logger.warning(f"Instant checkout failed: {err}")
             logger.info("Trying alternative: Add to cart and checkout from cart page...")
             
-            # Try to add to cart as fallback
+            # Try to add to cart as fallback with multiple selectors
             try:
-                add_to_cart_btn = page.locator("//button[@data-testid='add-to-cart-cta-button']")
-                if await add_to_cart_btn.is_visible(timeout=3000):
-                    await add_to_cart_btn.click()
-                    logger.debug("Added to cart via fallback")
-                    await page.wait_for_timeout(2000)
-                    # The cart-based checkout will be handled by the caller
-                    return
+                add_to_cart_selectors = [
+                    "//button[@data-testid='add-to-cart-cta-button']",
+                    "//button[contains(@data-testid, 'add-to-cart')]",
+                    "//button[.//span[contains(text(), 'Add to Cart')]]",
+                    "//button[.//span[contains(text(), 'Add To Cart')]]",
+                    "//button[contains(@class, 'add-to-cart')]",
+                ]
+                for selector in add_to_cart_selectors:
+                    try:
+                        add_to_cart_btn = page.locator(selector).first
+                        if await add_to_cart_btn.is_visible(timeout=2000):
+                            await add_to_cart_btn.click()
+                            logger.debug(f"Added to cart via fallback selector: {selector}")
+                            await page.wait_for_timeout(2000)
+                            return
+                    except Exception:
+                        continue
             except Exception:
                 pass
             
@@ -470,17 +480,44 @@ class EpicGames:
             # 🔥 新思路：彻底解决按钮识别问题 (黑名单机制 + 智能点击)
             # ------------------------------------------------------------
             
-            # 1. 尝试找到所有可能的“主按钮”
-            # Epic 按钮通常有 'purchase-cta-button' 这个 TestID
-            purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
-
-            # 2. 如果没找到主按钮，尝试找“库中”状态
+            # 1. 尝试多种选择器找到购买按钮
+            # Epic Games 商店按钮选择器 (按优先级排列)
+            purchase_btn = None
             btn_visible = False
-            try:
-                btn_visible = await purchase_btn.is_visible(timeout=5000)
-            except Exception:
-                btn_visible = False
-
+            
+            # 选择器列表：尝试多种可能的按钮选择器
+            selectors = [
+                # 原始选择器
+                "//button[@data-testid='purchase-cta-button']",
+                # 新版 Epic Games 商店可能使用的其他选择器
+                "//button[contains(@data-testid, 'purchase')]",
+                "//button[contains(@data-testid, 'add-to-cart')]",
+                "//button[contains(@data-testid, 'buy')]",
+                "//button[contains(@data-testid, 'get')]",
+                # 基于文本内容的选择器
+                "//button[.//span[contains(text(), 'Get')]]",
+                "//button[.//span[contains(text(), 'Add to Cart')]]",
+                "//button[.//span[contains(text(), 'Free')]]",
+                "//button[.//span[contains(text(), 'Claim')]]",
+                # 通用按钮选择器 (包含特定类名)
+                "//button[contains(@class, 'purchase')]",
+                "//button[contains(@class, 'add-to-cart')]",
+                "//button[contains(@class, 'buy')]",
+            ]
+            
+            # 尝试每个选择器
+            for selector in selectors:
+                try:
+                    btn = page.locator(selector).first
+                    if await btn.is_visible(timeout=2000):
+                        purchase_btn = btn
+                        btn_visible = True
+                        logger.debug(f"Found purchase button with selector: {selector}")
+                        break
+                except Exception:
+                    continue
+            
+            # 2. 如果没找到主按钮，尝试找"库中"状态
             if not btn_visible:
                 # 再次检查是否在库中 (有时按钮不叫 purchase-cta，而是简单的 disabled button)
                 try:
@@ -490,22 +527,44 @@ class EpicGames:
                          continue
                 except Exception:
                     pass
+                
                 # 3b. 尝试在 iframe 中查找按钮
                 try:
                     for frame in page.frames:
                         if frame == page.main_frame:
                             continue
-                        iframe_btn = frame.locator("//button[@data-testid='purchase-cta-button']").first
-                        if await iframe_btn.is_visible(timeout=3000):
-                            purchase_btn = iframe_btn
-                            btn_visible = True
-                            logger.debug(f"Found purchase button in iframe: {frame.url}")
+                        # 在 iframe 中也尝试多种选择器
+                        for selector in selectors:
+                            try:
+                                iframe_btn = frame.locator(selector).first
+                                if await iframe_btn.is_visible(timeout=2000):
+                                    purchase_btn = iframe_btn
+                                    btn_visible = True
+                                    logger.debug(f"Found purchase button in iframe: {frame.url} with selector: {selector}")
+                                    break
+                            except Exception:
+                                continue
+                        if btn_visible:
                             break
                 except Exception:
                     pass
 
                 if not btn_visible:
-                    logger.warning(f"Could not find any purchase button - {url=}")
+                    # 添加调试信息：打印页面上的所有按钮
+                    try:
+                        all_buttons = await page.locator("button").all()
+                        button_texts = []
+                        for btn in all_buttons:
+                            try:
+                                text = await btn.text_content()
+                                if text and text.strip():
+                                    button_texts.append(text.strip())
+                            except:
+                                pass
+                        logger.warning(f"Could not find any purchase button - {url=}")
+                        logger.debug(f"Page buttons found: {button_texts[:10]}")  # 只显示前10个
+                    except Exception:
+                        logger.warning(f"Could not find any purchase button - {url=}")
                     continue
 
             # 3. 获取按钮文字
