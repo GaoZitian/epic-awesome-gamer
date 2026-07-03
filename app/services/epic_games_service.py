@@ -492,16 +492,49 @@ class EpicGames:
             btn_visible = False
 
             selectors = [
+                # data-testid 精确/模糊匹配
                 "//button[@data-testid='purchase-cta-button']",
                 "//button[contains(@data-testid, 'purchase')]",
                 "//button[contains(@data-testid, 'add-to-cart')]",
                 "//button[contains(@data-testid, 'buy')]",
                 "//button[contains(@data-testid, 'get')]",
+                # 英文文本匹配 (span 子元素)
                 "//button[.//span[text()='Get']]",
                 "//button[.//span[text()='Add to Cart']]",
                 "//button[.//span[text()='Add To Cart']]",
                 "//button[.//span[text()='Free']]",
                 "//button[.//span[text()='Claim']]",
+                # 中文文本匹配 (span 子元素)
+                "//button[.//span[text()='获取']]",
+                "//button[.//span[text()='免费获取']]",
+                "//button[.//span[text()='添加到购物车']]",
+                "//button[.//span[text()='加入购物车']]",
+                "//button[.//span[text()='免费']]",
+                "//button[.//span[text()='领取']]",
+                # 英文文本直接匹配 (button 自身文本)
+                "//button[normalize-space(text())='Get']",
+                "//button[normalize-space(text())='Add to Cart']",
+                "//button[normalize-space(text())='Free']",
+                "//button[normalize-space(text())='Claim']",
+                "//button[normalize-space(text())='BUY NOW']",
+                "//button[normalize-space(text())='GET']",
+                # 中文文本直接匹配 (button 自身文本)
+                "//button[normalize-space(text())='获取']",
+                "//button[normalize-space(text())='免费获取']",
+                "//button[normalize-space(text())='添加到购物车']",
+                "//button[normalize-space(text())='加入购物车']",
+                "//button[normalize-space(text())='免费']",
+                "//button[normalize-space(text())='领取']",
+                # aria-label 匹配
+                "//button[contains(@aria-label, 'Get')]",
+                "//button[contains(@aria-label, 'Add to Cart')]",
+                "//button[contains(@aria-label, '获取')]",
+                "//button[contains(@aria-label, '添加到购物车')]",
+                # role=button 的 div/span (某些 SPA 用 div 模拟按钮)
+                "//div[@role='button'][contains(text(), 'Get')]",
+                "//div[@role='button'][contains(text(), '获取')]",
+                "//span[@role='button'][contains(text(), 'Get')]",
+                "//span[@role='button'][contains(text(), '获取')]",
             ]
 
             for selector in selectors:
@@ -553,6 +586,22 @@ class EpicGames:
                     pass
 
                 if not btn_visible:
+                    # 调试：打印页面上所有按钮的文本和 data-testid
+                    try:
+                        all_buttons = await page.locator("button").all()
+                        btn_info = []
+                        for b in all_buttons[:15]:
+                            try:
+                                txt = (await b.text_content(timeout=1000) or "").strip()[:50]
+                                testid = await b.get_attribute("data-testid") or ""
+                                aria = await b.get_attribute("aria-label") or ""
+                                btn_info.append(f"text='{txt}' testid='{testid}' aria='{aria}'")
+                            except Exception:
+                                pass
+                        if btn_info:
+                            logger.debug(f"🔍 Page buttons found ({len(btn_info)}): {' | '.join(btn_info)}")
+                    except Exception:
+                        pass
                     logger.warning(f"⚠️ Could not find any purchase button - {url=}")
                     continue
 
