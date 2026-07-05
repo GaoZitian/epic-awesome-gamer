@@ -57,19 +57,14 @@ def get_promotions() -> List[PromotionGame]:
         cache_key.parent.mkdir(parents=True, exist_ok=True)
         cache_key.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
-    # Get store promotion data and <this week free> games
     for e in data["data"]["Catalog"]["searchStore"]["elements"]:
         if not is_discount_game(e):
             continue
 
-        # -----------------------------------------------------------
-        # 🟢 智能 URL 识别逻辑
-        # -----------------------------------------------------------
         is_bundle = False
         if e.get("offerType") == "BUNDLE":
             is_bundle = True
         
-        # 补充检测：分类和标题
         if not is_bundle:
             for cat in e.get("categories", []):
                 if "bundle" in cat.get("path", "").lower():
@@ -198,10 +193,8 @@ class EpicGames:
     async def _active_purchase_container(page: Page):
         logger.debug("Scanning for purchase iframe...")
         
-        # Wait for potential iframe to load
         await page.wait_for_timeout(3000)
         
-        # Try multiple iframe selectors (prioritized by likelihood)
         iframe_selectors = [
             ("//iframe[@class='']", "empty class"),
             ("//iframe[contains(@id, 'webPurchaseContainer')]", "webPurchaseContainer id"),
@@ -217,10 +210,8 @@ class EpicGames:
         for selector, desc in iframe_selectors:
             try:
                 locator = page.frame_locator(selector).first
-                # Check if iframe has meaningful content (buttons or divs)
                 body = locator.locator("body")
                 if await body.count() > 0:
-                    # Check if there's any interactive content
                     buttons = locator.locator("button")
                     button_count = await buttons.count()
                     if button_count > 0:
@@ -233,7 +224,6 @@ class EpicGames:
             except Exception:
                 continue
         
-        # Fallback: try any iframe that has buttons
         if not wpc:
             logger.debug("Trying fallback: scan all iframes for buttons...")
             try:
@@ -243,7 +233,6 @@ class EpicGames:
                         buttons = frame.locator("button")
                         if await buttons.count() > 0:
                             logger.debug(f"✅ Found iframe with buttons: {frame.url}")
-                            # Store the frame for later use
                             wpc = frame
                             matched_selector = f"frame: {frame.url}"
                             break
@@ -254,7 +243,6 @@ class EpicGames:
         
         if not wpc:
             logger.warning("Could not find any purchase iframe with buttons")
-            # Debug: list all iframes on page
             try:
                 all_frames = page.frames
                 logger.debug(f"Total frames on page: {len(all_frames)}")
@@ -266,7 +254,6 @@ class EpicGames:
         
         logger.debug(f"Looking for payment button in iframe ({matched_selector})...")
 
-        # Debug: print all buttons in iframe
         try:
             all_buttons = wpc.locator("button")
             btn_count = await all_buttons.count()
@@ -284,9 +271,7 @@ class EpicGames:
         except Exception as e:
             logger.debug(f"Could not enumerate buttons: {e}")
 
-        # Try multiple button selectors with different text variations
         button_selectors = [
-            # Text-based selectors (English)
             ("button", "Add to library"),
             ("button", "ADD TO LIBRARY"),
             ("button", "Add To Library"),
@@ -303,16 +288,13 @@ class EpicGames:
             ("button", "Get"),
             ("button", "BUY"),
             ("button", "Buy"),
-            # CSS class-based selectors
             ("//button[contains(@class, 'payment-confirm')]", None),
             ("//button[contains(@class, 'payment-btn--primary')]", None),
             ("//button[contains(@class, 'confirm')]", None),
             ("//button[contains(@class, 'pay')]", None),
             ("//div[contains(@class, 'payment-order-confirm')]//button", None),
-            # Data attribute selectors
             ("//button[@data-testid='place-order-button']", None),
             ("//button[@data-testid='confirm-order-button']", None),
-            # Any primary-looking button
             ("//button[contains(@class, 'primary')]", None),
             ("//button[contains(@class, 'cta')]", None),
         ]
@@ -331,7 +313,6 @@ class EpicGames:
             except Exception:
                 continue
 
-        # Last resort: find any visible button in the iframe (prefer non-empty text)
         logger.debug("Trying to find any visible button in iframe...")
         try:
             all_buttons = wpc.locator("button")
@@ -341,12 +322,11 @@ class EpicGames:
                     btn = all_buttons.nth(i)
                     if await btn.is_visible(timeout=2000):
                         btn_text = await btn.text_content() or ""
-                        if btn_text.strip():  # Prefer button with text
+                        if btn_text.strip():
                             logger.debug(f"✅ Found visible button with text: '{btn_text.strip()}'")
                             return wpc, btn
                 except Exception:
                     continue
-            # If no button with text, try first visible button
             for i in range(btn_count):
                 try:
                     btn = all_buttons.nth(i)
@@ -374,7 +354,6 @@ class EpicGames:
         logger.info("🚀 Triggering Instant Checkout Flow...")
         agent = AgentV(page=page, agent_config=settings)
 
-        # Wait for checkout dialog/iframe to appear
         logger.debug("Waiting for checkout UI to load...")
         await page.wait_for_timeout(5000)
 
@@ -417,7 +396,6 @@ class EpicGames:
             logger.warning(f"Instant checkout failed: {err}")
             logger.info("Trying alternative: Add to cart and checkout from cart page...")
             
-            # Try to add to cart as fallback with multiple selectors
             try:
                 add_to_cart_selectors = [
                     "//button[@data-testid='add-to-cart-cta-button']",
@@ -439,7 +417,6 @@ class EpicGames:
             except Exception:
                 pass
             
-            # If add to cart didn't work, try to find and click any checkout button
             try:
                 checkout_btn = page.locator("//button[contains(text(), 'Check Out') or contains(text(), 'Checkout')]")
                 if await checkout_btn.is_visible(timeout=3000):
@@ -460,87 +437,107 @@ class EpicGames:
         has_pending_cart_items = False
 
         for url in urls:
+            game_slug = url.rstrip('/').split('/')[-1]
+            
             await page.goto(url, wait_until="load")
 
-            # 等待页面 JS 渲染完成 (SPA 需要额外等待)
             try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("networkidle", timeout=20000)
             except Exception:
                 pass
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(5000)
 
-            # 404 检测
+            try:
+                await page.screenshot(path=f"debug_{game_slug}_01_initial.png", full_page=False)
+                logger.debug(f"📸 Screenshot: debug_{game_slug}_01_initial.png")
+            except Exception:
+                pass
+
+            try:
+                await page.screenshot(path=f"debug_{game_slug}_01_fullpage.png", full_page=True)
+                logger.debug(f"📸 Full page: debug_{game_slug}_01_fullpage.png")
+            except Exception:
+                pass
+
+            try:
+                page_url = page.url
+                page_title = await page.title()
+                logger.debug(f"📄 URL: {page_url}")
+                logger.debug(f"📄 Title: {page_title}")
+            except Exception:
+                pass
+
             title = await page.title()
             if "404" in title or "Page Not Found" in title:
                 logger.error(f"❌ Invalid URL (404 Page): {url}")
                 continue
 
-            # 处理年龄限制弹窗
             try:
                 continue_btn = page.locator("//button//span[text()='Continue']")
                 if await continue_btn.is_visible(timeout=5000):
                     await continue_btn.click()
+                    await page.wait_for_timeout(2000)
             except Exception:
                 pass 
 
-            # ------------------------------------------------------------
-            # 🔥 按钮识别与状态判断
-            # ------------------------------------------------------------
+            try:
+                await page.screenshot(path=f"debug_{game_slug}_02_after_popup.png", full_page=False)
+                logger.debug(f"📸 Screenshot: debug_{game_slug}_02_after_popup.png")
+            except Exception:
+                pass
 
-            # 1. 尝试找到主按钮 (多种选择器容错)
             purchase_btn = None
             btn_visible = False
 
             selectors = [
-                # data-testid 精确/模糊匹配
                 "//button[@data-testid='purchase-cta-button']",
                 "//button[contains(@data-testid, 'purchase')]",
                 "//button[contains(@data-testid, 'add-to-cart')]",
                 "//button[contains(@data-testid, 'buy')]",
                 "//button[contains(@data-testid, 'get')]",
-                # 英文文本匹配 (span 子元素)
                 "//button[.//span[text()='Get']]",
                 "//button[.//span[text()='Add to Cart']]",
                 "//button[.//span[text()='Add To Cart']]",
                 "//button[.//span[text()='Free']]",
                 "//button[.//span[text()='Claim']]",
-                # 中文文本匹配 (span 子元素)
                 "//button[.//span[text()='获取']]",
                 "//button[.//span[text()='免费获取']]",
                 "//button[.//span[text()='添加到购物车']]",
                 "//button[.//span[text()='加入购物车']]",
                 "//button[.//span[text()='免费']]",
                 "//button[.//span[text()='领取']]",
-                # 英文文本直接匹配 (button 自身文本)
                 "//button[normalize-space(text())='Get']",
                 "//button[normalize-space(text())='Add to Cart']",
                 "//button[normalize-space(text())='Free']",
                 "//button[normalize-space(text())='Claim']",
                 "//button[normalize-space(text())='BUY NOW']",
                 "//button[normalize-space(text())='GET']",
-                # 中文文本直接匹配 (button 自身文本)
                 "//button[normalize-space(text())='获取']",
                 "//button[normalize-space(text())='免费获取']",
                 "//button[normalize-space(text())='添加到购物车']",
                 "//button[normalize-space(text())='加入购物车']",
                 "//button[normalize-space(text())='免费']",
                 "//button[normalize-space(text())='领取']",
-                # aria-label 匹配
                 "//button[contains(@aria-label, 'Get')]",
                 "//button[contains(@aria-label, 'Add to Cart')]",
                 "//button[contains(@aria-label, '获取')]",
                 "//button[contains(@aria-label, '添加到购物车')]",
-                # role=button 的 div/span (某些 SPA 用 div 模拟按钮)
                 "//div[@role='button'][contains(text(), 'Get')]",
                 "//div[@role='button'][contains(text(), '获取')]",
                 "//span[@role='button'][contains(text(), 'Get')]",
                 "//span[@role='button'][contains(text(), '获取')]",
+                "//button[contains(., 'Get')]",
+                "//button[contains(., 'Free')]",
+                "//button[contains(., 'Claim')]",
+                "//button[contains(., '获取')]",
+                "//button[contains(., '免费')]",
+                "//button[contains(., '领取')]",
             ]
 
             for selector in selectors:
                 try:
                     btn = page.locator(selector).first
-                    if await btn.is_visible(timeout=3000):
+                    if await btn.is_visible(timeout=2000):
                         purchase_btn = btn
                         btn_visible = True
                         logger.debug(f"Found purchase button with selector: {selector}")
@@ -548,24 +545,20 @@ class EpicGames:
                 except Exception:
                     continue
 
-            # 2. 如果没找到主按钮，检查页面状态
             if not btn_visible:
                 try:
                     all_text = await page.locator("body").text_content(timeout=5000)
                 except Exception:
                     all_text = ""
 
-                # 已在库中
                 if "In Library" in all_text or "Owned" in all_text:
                     logger.success(f"✅ Game already in library - {url=}")
                     continue
 
-                # 地区/平台不可用
                 if "unavailable" in all_text.lower() or "当前无法" in all_text:
                     logger.warning(f"⚠️ Game unavailable in this region - {url=}")
                     continue
 
-                # 尝试在 iframe 中查找按钮
                 try:
                     for frame in page.frames:
                         if frame == page.main_frame:
@@ -573,7 +566,7 @@ class EpicGames:
                         for selector in selectors:
                             try:
                                 iframe_btn = frame.locator(selector).first
-                                if await iframe_btn.is_visible(timeout=3000):
+                                if await iframe_btn.is_visible(timeout=2000):
                                     purchase_btn = iframe_btn
                                     btn_visible = True
                                     logger.debug(f"Found purchase button in iframe: {frame.url}")
@@ -586,26 +579,88 @@ class EpicGames:
                     pass
 
                 if not btn_visible:
-                    # 调试：打印页面上所有按钮的文本和 data-testid
+                    try:
+                        await page.screenshot(path=f"debug_{game_slug}_03_no_button.png", full_page=False)
+                        logger.debug(f"📸 Screenshot: debug_{game_slug}_03_no_button.png")
+                    except Exception:
+                        pass
+
                     try:
                         all_buttons = await page.locator("button").all()
                         btn_info = []
-                        for b in all_buttons[:15]:
+                        for b in all_buttons[:20]:
                             try:
-                                txt = (await b.text_content(timeout=1000) or "").strip()[:50]
+                                txt = (await b.text_content(timeout=1000) or "").strip()[:80]
                                 testid = await b.get_attribute("data-testid") or ""
                                 aria = await b.get_attribute("aria-label") or ""
                                 btn_info.append(f"text='{txt}' testid='{testid}' aria='{aria}'")
                             except Exception:
                                 pass
                         if btn_info:
-                            logger.debug(f"🔍 Page buttons found ({len(btn_info)}): {' | '.join(btn_info)}")
+                            logger.debug(f"🔍 Buttons found ({len(btn_info)}):")
+                            for i, info in enumerate(btn_info):
+                                logger.debug(f"  Button {i}: {info}")
                     except Exception:
                         pass
-                    logger.warning(f"⚠️ Could not find any purchase button - {url=}")
-                    continue
 
-            # 3. 检查按钮是否被禁用 (已在库中)
+                    try:
+                        html_content = await page.content()
+                        logger.debug(f"📄 HTML length: {len(html_content)}")
+                        for keyword in ["Get", "Free", "Claim", "Add to Cart", "获取", "免费", "领取", "In Library", "Owned"]:
+                            if keyword in html_content:
+                                logger.debug(f"  ✅ Found '{keyword}' in HTML")
+                            else:
+                                logger.debug(f"  ❌ '{keyword}' NOT in HTML")
+                    except Exception:
+                        pass
+
+                    try:
+                        frames = page.frames
+                        logger.debug(f"🔍 Frames: {len(frames)}")
+                        for i, frame in enumerate(frames):
+                            logger.debug(f"  Frame {i}: url={frame.url}")
+                    except Exception:
+                        pass
+
+                    try:
+                        shadow_hosts = await page.evaluate('''() => {
+                            const hosts = [];
+                            document.querySelectorAll('*').forEach(el => {
+                                if (el.shadowRoot) {
+                                    hosts.push({tag: el.tagName, id: el.id, class: el.className});
+                                }
+                            });
+                            return hosts;
+                        }''')
+                        if shadow_hosts:
+                            logger.debug(f"🔍 Shadow DOM hosts: {len(shadow_hosts)}")
+                    except Exception:
+                        pass
+
+                    logger.debug("⏳ Waiting 10s more for dynamic content...")
+                    await page.wait_for_timeout(10000)
+                    
+                    for selector in selectors[:10]:
+                        try:
+                            btn = page.locator(selector).first
+                            if await btn.is_visible(timeout=2000):
+                                purchase_btn = btn
+                                btn_visible = True
+                                logger.debug(f"✅ Found button after extended wait: {selector}")
+                                break
+                        except Exception:
+                            continue
+                    
+                    if not btn_visible:
+                        try:
+                            await page.screenshot(path=f"debug_{game_slug}_04_final.png", full_page=True)
+                            logger.debug(f"📸 Final: debug_{game_slug}_04_final.png")
+                        except Exception:
+                            pass
+                        
+                        logger.warning(f"⚠️ Could not find any purchase button - {url=}")
+                        continue
+
             is_disabled = False
             try:
                 is_disabled = await purchase_btn.is_disabled()
@@ -616,7 +671,6 @@ class EpicGames:
                 logger.success(f"✅ Button disabled (already owned) - {url=}")
                 continue
 
-            # 4. 获取按钮文字
             try:
                 btn_text = await purchase_btn.text_content(timeout=5000)
             except Exception:
@@ -626,39 +680,20 @@ class EpicGames:
 
             logger.debug(f"👉 Found Button: '{btn_text}'")
 
-            # 3. 获取按钮文字
-            try:
-                btn_text = await purchase_btn.text_content(timeout=5000)
-            except Exception:
-                btn_text = ""
-            if not btn_text: btn_text = ""
-            btn_text_upper = btn_text.strip().upper()
-            
-            logger.debug(f"👉 Found Button: '{btn_text}'")
-
-            # 4. 黑名单检查：只有这些情况绝对不能点
-            # 如果是 'IN LIBRARY', 'OWNED', 'UNAVAILABLE', 'COMING SOON' -> 跳过
             if any(s in btn_text_upper for s in ["IN LIBRARY", "OWNED", "UNAVAILABLE", "COMING SOON"]):
                 logger.success(f"Game status is '{btn_text}' - Skipping.")
                 continue
 
-            # 5. 白名单检查 (Add to Cart 特殊处理)
-            # 如果包含 'CART'，说明是加入购物车流程
             if "CART" in btn_text_upper:
                 logger.debug(f"🛒 Logic: Add To Cart - {url=}")
                 await purchase_btn.click()
                 has_pending_cart_items = True
                 continue
             
-            # 6. 默认处理 (盲点逻辑)
-            # 只要不是黑名单，也不是购物车，统统当做 "Get/Purchase" 直接点击！
-            # 不管它写的是 'Get', 'Free', 'Purchase', 'Buy Now'，只要 API 说是免费的，我们就点！
             logger.debug(f"⚡️ Logic: Aggressive Click (Text: {btn_text}) - {url=}")
             await purchase_btn.click()
             
-            # 点击后，转入即时结账流程
             await self._handle_instant_checkout(page)
-            # ------------------------------------------------------------
 
         return has_pending_cart_items
 
