@@ -551,7 +551,12 @@ class EpicGames:
                 except Exception:
                     all_text = ""
 
-                if "In Library" in all_text or "Owned" in all_text:
+                try:
+                    html_content = await page.content()
+                except Exception:
+                    html_content = ""
+
+                if "In Library" in all_text or "Owned" in all_text or "In Library" in html_content or "Owned" in html_content:
                     logger.success(f"✅ Game already in library - {url=}")
                     continue
 
