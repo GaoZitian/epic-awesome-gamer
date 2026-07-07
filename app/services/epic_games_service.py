@@ -556,12 +556,30 @@ class EpicGames:
                 except Exception:
                     html_content = ""
 
-                if "In Library" in all_text or "Owned" in all_text or "In Library" in html_content or "Owned" in html_content:
-                    logger.success(f"✅ Game already in library - {url=}")
-                    continue
+                library_indicators = [
+                    "//div[contains(@class, 'purchase')]//span[contains(text(), 'In Library')]",
+                    "//div[contains(@class, 'purchase')]//span[contains(text(), 'Owned')]",
+                    "//div[contains(@data-testid, 'purchase')]//span[contains(text(), 'In Library')]",
+                    "//div[contains(@data-testid, 'purchase')]//span[contains(text(), 'Owned')]",
+                    "//button[contains(@data-testid, 'purchase') and contains(text(), 'In Library')]",
+                    "//button[contains(@data-testid, 'purchase') and contains(text(), 'Owned')]",
+                    "//*[contains(@data-testid, 'purchase-cta') and contains(text(), 'In Library')]",
+                    "//*[contains(@data-testid, 'purchase-cta') and contains(text(), 'Owned')]",
+                ]
 
-                if "unavailable" in all_text.lower() or "当前无法" in all_text:
-                    logger.warning(f"⚠️ Game unavailable in this region - {url=}")
+                for indicator in library_indicators:
+                    try:
+                        elem = page.locator(indicator).first
+                        if await elem.is_visible(timeout=2000):
+                            logger.success(f"✅ Game already in library - {url=}")
+                            break
+                    except Exception:
+                        continue
+                else:
+                    if "unavailable" in all_text.lower() or "当前无法" in all_text:
+                        logger.warning(f"⚠️ Game unavailable in this region - {url=}")
+                        continue
+                    logger.warning(f"⚠️ Could not find purchase button or library indicator - {url=}")
                     continue
 
                 try:
