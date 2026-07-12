@@ -431,28 +431,69 @@ class EpicGames:
             await page.wait_for_selector(iframe_selector, timeout=20000)
 
         wpc = page.frame_locator(iframe_selector).first
-        logger.debug("Looking for 'PLACE ORDER' button...")
+        logger.debug("Looking for checkout button in iframe...")
 
-        # 多种按钮文案：Epic 在不同支付方式/地区下文案不同
-        place_order_btn = wpc.locator("button", has_text="PLACE ORDER")
-        complete_order_btn = wpc.locator("button", has_text="COMPLETE ORDER")
-        confirm_btn = wpc.locator("//button[contains(@class, 'payment-confirm__btn')]")
-        checkout_btn = wpc.locator("button", has_text="CHECKOUT")
-        submit_btn = wpc.locator("button[type='submit']")
+        # 更宽泛的按钮选择器：按优先级从精确到模糊
+        # Epic 频繁改按钮文案和 class，必须兜底到"iframe 里任何可点按钮"
+        candidates = [
+            # 文案匹配（优先精确）
+            ("PLACE ORDER", wpc.locator("button", has_text="PLACE ORDER")),
+            ("COMPLETE ORDER", wpc.locator("button", has_text="COMPLETE ORDER")),
+            ("CHECKOUT", wpc.locator("button", has_text="CHECKOUT")),
+            ("CONFIRM", wpc.locator("button", has_text="CONFIRM")),
+            ("PURCHASE", wpc.locator("button", has_text="PURCHASE")),
+            # CSS class 匹配
+            ("payment-confirm__btn", wpc.locator("button.payment-confirm__btn")),
+            ("payment-confirm__button", wpc.locator("button.payment-confirm__button")),
+            # type=submit
+            ("submit", wpc.locator("button[type='submit']")),
+            # input 类型按钮
+            ("input-submit", wpc.locator("input[type='submit']")),
+            # 最后兜底：iframe 里第一个可点击的 button（排除 disabled）
+        ]
 
-        for label, btn, timeout_ms in [
-            ("PLACE ORDER", place_order_btn, 20000),
-            ("COMPLETE ORDER", complete_order_btn, 10000),
-            ("CHECKOUT", checkout_btn, 10000),
-            ("payment-confirm__btn", confirm_btn, 8000),
-            ("submit", submit_btn, 5000),
-        ]:
+        for label, btn in candidates:
             try:
-                await expect(btn).to_be_visible(timeout=timeout_ms)
-                logger.debug(f"✅ Found '{label}' button")
-                return wpc, btn
-            except AssertionError:
-                pass
+                await expect(btn).to_be_visible(timeout=15000)
+                # 额外确认按钮不是 disabled
+                if await btn.is_enabled(timeout=5000):
+                    logger.debug(f"✅ Found '{label}' button")
+                    return wpc, btn
+            except Exception:
+                continue
+
+        # 兜底：iframe 里所有 button，找第一个 enabled 的
+        try:
+            all_buttons = wpc.locator("button")
+            count = await all_buttons.count()
+            logger.debug(f"Iframe contains {count} buttons, scanning...")
+            for i in range(count):
+                btn = all_buttons.nth(i)
+                try:
+                    if await btn.is_visible(timeout=3000):
+                        if await btn.is_enabled(timeout=3000):
+                            text = (await btn.text_content() or "").strip()[:50]
+                            logger.debug(f"✅ Found fallback button [{i}] text='{text}'")
+                            return wpc, btn
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # 再兜底：iframe 里所有 input button
+        try:
+            all_inputs = wpc.locator("input[type='button'], input[type='submit']")
+            count = await all_inputs.count()
+            for i in range(count):
+                inp = all_inputs.nth(i)
+                try:
+                    if await inp.is_visible(timeout=3000) and await inp.is_enabled(timeout=3000):
+                        logger.debug(f"✅ Found fallback input button [{i}]")
+                        return wpc, inp
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
         logger.warning("Primary buttons not found in iframe.")
         raise AssertionError("Could not find Place Order button in iframe")
@@ -663,9 +704,67 @@ class EpicGames:
             logger.debug("Move ALL paid games from cart")
             await self._empty_cart(self.page)
 
-            agent = AgentV(page=self.page, agent_config=settings)
-            await self.page.click("//button//span[text()='Check Out']")
+            # "Check Out" 按钮选择器：Epic 频繁改文案，必须兜底
+            checkout_selectors = [
+                "//button//span[text()='Check Out']",
+                "//button//span[text()='Proceed to Checkout']",
+                "//button//span[text()='Proceed']",
+                "//button//span[text()='Buy']",
+                "//button[text()='Check Out']",
+                "//button[text()='Proceed to Checkout']",
+                "//button[text()='Proceed']",
+                "//button[text()='Buy']",
+                "//button[@data-testid='cart-checkout-button']",
+                "//button[contains(@class, 'checkout-button')]",
+                "//button[contains(@class, 'cart-checkout')]",
+                "//a[contains(@class, 'checkout-button')]",
+            ]
+
+            checkout_clicked = False
+            for selector in checkout_selectors:
+                try:
+                    logger.debug(f"Trying checkout selector: {selector}")
+                    btn = page.locator(selector).first
+                    if await btn.is_visible(timeout=5000):
+                        await btn.click(timeout=5000, no_wait_after=True)
+                        logger.debug(f"✅ Checkout clicked via: {selector}")
+                        checkout_clicked = True
+                        await page.wait_for_timeout(2000)
+                        break
+                except Exception:
+                    continue
+
+            if not checkout_clicked:
+                # 兜底：找购物车页面上任何包含 checkout 相关文字的按钮
+                logger.warning("No standard checkout button found, scanning for any checkout-like button...")
+                try:
+                    all_buttons = page.locator("button, a")
+                    count = await all_buttons.count()
+                    for i in range(count):
+                        btn = all_buttons.nth(i)
+                        try:
+                            if await btn.is_visible(timeout=1000):
+                                text = (await btn.text_content() or "").strip().upper()
+                                if any(kw in text for kw in ["CHECKOUT", "PROCEED", "BUY", "PURCHASE", "CONFIRM"]):
+                                    if await btn.is_enabled(timeout=1000):
+                                        await btn.click(timeout=5000, no_wait_after=True)
+                                        logger.debug(f"✅ Fallback checkout clicked: '{text}'")
+                                        checkout_clicked = True
+                                        await page.wait_for_timeout(2000)
+                                        break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not checkout_clicked:
+                logger.error("Could not find any checkout button on cart page")
+                raise RuntimeError("No checkout button found")
+
             await self._agree_license(self.page)
+
+            # CAPTCHA solver agent
+            agent = AgentV(page=self.page, agent_config=settings)
 
             try:
                 logger.debug("Move to webPurchaseContainer iframe")
