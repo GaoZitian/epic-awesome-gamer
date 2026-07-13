@@ -570,20 +570,21 @@ class EpicGames:
                 else:
                     logger.info(f"CAPTCHA check skipped: {e}")
 
-            # 推断成功：按钮消失或 iframe 关闭
+            # 验证购买结果：不能靠"按钮消失"推断，必须实际检查
+            game_url = page.url
+            logger.debug("Verifying purchase by checking game page...")
             try:
-                if not await payment_btn.is_visible():
-                    logger.success("🎉 Payment button disappeared (Success inferred)")
+                await page.goto(game_url, wait_until="domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(3000)
+                all_text = await page.locator("body").text_content()
+                if "In Library" in (all_text or "") or "PLAY" in (all_text or "") or "OWNED" in (all_text or "").upper():
+                    logger.success("✅ Purchase verified: game is in library")
                     return
-            except Exception:
-                logger.success("🎉 Iframe closed (Success inferred)")
-                return
+            except Exception as e:
+                logger.warning(f"Verification failed: {e}")
 
-            with suppress(Exception):
-                await payment_btn.click(force=True)
-                await page.wait_for_timeout(2000)
-
-            logger.success("Instant checkout flow finished (Blind Success).")
+            # 无法验证，标记为失败
+            raise RuntimeError("Purchase verification failed: cannot confirm game was claimed")
 
         except Exception as err:
             if _is_quota_exhausted_error(err):
