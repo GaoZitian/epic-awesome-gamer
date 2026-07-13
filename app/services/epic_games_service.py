@@ -3,6 +3,7 @@
 # Author : QIN2DIM
 # GitHub : https://github.com/QIN2DIM
 # Description: 游戏商城控制句柄
+
 import asyncio
 import json
 import os
@@ -461,19 +462,20 @@ class EpicGames:
             except Exception:
                 continue
 
-        # 兜底：iframe 里所有 button，找第一个 enabled 的
+        # 兜底：iframe 里所有 button，找第一个 enabled 的（等待动态加载）
         try:
             all_buttons = wpc.locator("button")
             count = await all_buttons.count()
-            logger.debug(f"Iframe contains {count} buttons, scanning...")
+            logger.debug(f"Iframe contains {count} buttons, waiting for enabled...")
             for i in range(count):
                 btn = all_buttons.nth(i)
                 try:
-                    if await btn.is_visible(timeout=3000):
-                        if await btn.is_enabled(timeout=3000):
-                            text = (await btn.text_content() or "").strip()[:50]
-                            logger.debug(f"✅ Found fallback button [{i}] text='{text}'")
-                            return wpc, btn
+                    # 先等可见 + enabled，最多等 60 秒（Epic 按钮可能延迟加载）
+                    await expect(btn).to_be_visible(timeout=30000)
+                    await expect(btn).to_be_enabled(timeout=30000)
+                    text = (await btn.text_content() or "").strip()[:50]
+                    logger.debug(f"✅ Found fallback button [{i}] text='{text}'")
+                    return wpc, btn
                 except Exception:
                     continue
         except Exception:
