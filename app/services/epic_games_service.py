@@ -737,17 +737,18 @@ class EpicGames:
                     continue
 
             if not checkout_clicked:
-                # 兜底：找购物车页面上任何包含 checkout 相关文字的按钮
+                # 兜底扫描 1: 找购物车页面上任何包含 checkout 相关文字的按钮
                 logger.warning("No standard checkout button found, scanning for any checkout-like button...")
                 try:
-                    all_buttons = page.locator("button, a")
+                    # 先尝试所有可见+enabled+含checkout文字的button/link
+                    all_buttons = page.locator("button, a, [role='button'], div[role='button']")
                     count = await all_buttons.count()
                     for i in range(count):
                         btn = all_buttons.nth(i)
                         try:
                             if await btn.is_visible(timeout=1000):
                                 text = (await btn.text_content() or "").strip().upper()
-                                if any(kw in text for kw in ["CHECKOUT", "PROCEED", "BUY", "PURCHASE", "CONFIRM"]):
+                                if any(kw in text for kw in ["CHECKOUT", "PROCEED", "BUY", "PURCHASE", "CONFIRM", "PLACE ORDER"]):
                                     if await btn.is_enabled(timeout=1000):
                                         await btn.click(timeout=5000, no_wait_after=True)
                                         logger.debug(f"✅ Fallback checkout clicked: '{text}'")
@@ -756,6 +757,44 @@ class EpicGames:
                                         break
                         except Exception:
                             continue
+                except Exception:
+                    pass
+
+            if not checkout_clicked:
+                # 兜底扫描 2: 找页面上第一个可见+enabled的按钮（最宽泛）
+                logger.warning("No checkout-like button found, clicking first enabled interactive element...")
+                try:
+                    # 尝试所有可交互元素：button, a[href], [role=button], [tabindex], input[type=submit], input[type=button]
+                    interactive_selectors = [
+                        "//button[@type='submit']",
+                        "//input[@type='submit']",
+                        "//input[@type='button']",
+                        "//button[not(@disabled)]",
+                    ]
+                    for sel in interactive_selectors:
+                        try:
+                            candidates = page.locator(sel)
+                            cnt = await candidates.count()
+                            for i in range(cnt):
+                                cand = candidates.nth(i)
+                                try:
+                                    if await cand.is_visible(timeout=1000) and await cand.is_enabled(timeout=1000):
+                                        text = (await cand.text_content() or "").strip()
+                                        logger.debug(f"Trying interactive candidate[{i}]: '{text}'")
+                                        # 排除关闭/删除/取消按钮
+                                        if any(skip in text.upper() for skip in ["CANCEL", "DELETE", "REMOVE", "CLOSE", "REMOVE GAME"]):
+                                            continue
+                                        await cand.click(timeout=5000, no_wait_after=True)
+                                        logger.debug(f"✅ Clicked interactive candidate[{i}]: '{text}'")
+                                        checkout_clicked = True
+                                        await page.wait_for_timeout(2000)
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            continue
+                        if checkout_clicked:
+                            break
                 except Exception:
                     pass
 
