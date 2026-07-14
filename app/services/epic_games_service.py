@@ -799,6 +799,29 @@ class EpicGames:
                     pass
 
             if not checkout_clicked:
+                # 兜底扫描 3: 暴力抓取 body 内的所有 click 可点元素
+                logger.warning("Still no checkout button found, dumping page DOM for debugging...")
+                try:
+                    # 抓取页面内所有有 onclick 或 role 或 tabindex 的元素
+                    all_clickable = page.locator("[onclick], [role], [tabindex]")
+                    clickable_count = await all_clickable.count()
+                    logger.debug(f"Found {clickable_count} elements with onclick/role/tabindex")
+                    for i in range(min(clickable_count, 30)):
+                        elem = all_clickable.nth(i)
+                        try:
+                            if await elem.is_visible(timeout=500) and await elem.is_enabled(timeout=500):
+                                text = (await elem.text_content() or "").strip()
+                                role = await elem.get_attribute("role") or ""
+                                onclick = await elem.get_attribute("onclick") or ""
+                                logger.debug(f"Element[{i}]: text='{text[:60]}' role='{role}' has_onclick={bool(onclick)}")
+                        except Exception:
+                            continue
+                    # 如果都没找到，直接打印 body 前 2000 字符
+                    body_html = await page.locator("body").inner_html()
+                    logger.debug(f"Cart page body (first 2000 chars): {body_html[:2000]}")
+                except Exception:
+                    pass
+
                 logger.error("Could not find any checkout button on cart page")
                 raise RuntimeError("No checkout button found")
 
