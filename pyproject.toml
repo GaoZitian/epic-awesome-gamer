@@ -5,8 +5,15 @@ dependencies = [
     "apscheduler>=3.11.0",
     "pydantic-settings>=2.8.1",
     "celery[redis]>=5.4.0",
-    "hcaptcha-challenger[camoufox]>=0.19.0",
+    "hcaptcha-challenger[camoufox]==0.19.0",
+    "camoufox[geoip]==0.4.11",
+    "playwright==1.56.0",
     "openai", # === [新增] 用于通过 AiHubMix 中转调用 Gemini ===
+    "browserforge>=1.2.0",
+    "cryptography>=45.0.0",
+    "redis>=5.0.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
 ]
 requires-python = ">=3.12,<=3.13"
 authors = [
@@ -25,7 +32,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Image Processing",
     "Topic :: Scientific/Engineering :: Image Recognition",
     "Topic :: Software Development",
