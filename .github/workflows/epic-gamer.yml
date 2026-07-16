@@ -54,6 +54,59 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Patch hcaptcha-challenger for robust iframe detection
+        run: |
+          set -euo pipefail
+          
+          # 写入 patch 脚本到临时文件
+          cat > /tmp/patch_hcaptcha.py << 'PYEOF'
+          import site
+          from pathlib import Path
+
+          sp = site.getsitepackages()[0]
+          challenger = Path(sp) / "hcaptcha_challenger" / "agent" / "challenger.py"
+          collector = Path(sp) / "hcaptcha_challenger" / "agent" / "collector.py"
+          
+          # Patch collector: 延长 payload 等待时间（10s → 90s）
+          collector_text = collector.read_text()
+          collector_text = collector_text.replace(
+              'timeout=10\n',
+              'timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))\n'
+          )
+          collector.write_text(collector_text)
+          print("✅ Patched collector.py: timeout 10s -> 90s")
+          
+          # Patch challenger: 放宽 challenge frame URL 匹配
+          text = challenger.read_text()
+          old_frame = 'and child_frame.url.startswith("https://newassets.hcaptcha.com/captcha/v1/")\n                and "frame=challenge" in child_frame.url'
+          new_frame = 'and "hcaptcha.com" in (child_frame.url or "")\n                and "frame=challenge" in (child_frame.url or "")'
+          if old_frame in text:
+              text = text.replace(old_frame, new_frame, 1)
+              print("✅ Patched frame URL matching to relaxed hcaptcha.com match")
+          else:
+              print("⚠️ Frame URL pattern not found in challenger.py")
+          
+          # Patch challenger: 延长 get_challenge_frame_locator 超时
+          old_loop = 'while True:\n            try:'
+          new_loop = 'deadline = asyncio.get_running_loop().time() + 90\n            try:\n            while time.monotonic() < deadline:'
+          if old_loop in text:
+              text = text.replace(old_loop, new_loop, 1)
+              print("✅ Patched frame locator with extended timeout")
+          else:
+              print("⚠️ Loop pattern not found, trying alternate...")
+              text = text.replace(
+                  'while True:',
+                  'deadline = time.monotonic() + 90\n        while time.monotonic() < deadline:',
+                  1
+              )
+              print("✅ Patched frame locator with extended timeout (alt)")
+          
+          challenger.write_text(text)
+          PYEOF
+          
+          python3 /tmp/patch_hcaptcha.py
+          echo "hcaptcha-challenger patched successfully"
+
       - name: Install Playwright browsers
         run: uv run playwright install firefox
 
@@ -81,6 +134,9 @@ jobs:
           ENABLE_APSCHEDULER: false
           PYTHONPATH: app
           ENABLE_AIHUBMIX_PATCH: true
+          # hcaptcha-challenger 补丁使用这些环境变量
+          HCAPTCHA_PAYLOAD_TIMEOUT: "90"
+          HCAPTCHA_FRAME_TIMEOUT: "90"
         run: |
           echo "🚀 启动定时领取任务（已适配 AiHubMix 中转）..."
           echo "GEMINI_BASE_URL=${GEMINI_BASE_URL}"
