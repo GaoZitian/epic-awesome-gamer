@@ -58,59 +58,60 @@ jobs:
         run: |
           set -euo pipefail
           
-          # 写入 patch 脚本到临时文件
-          cat > /tmp/patch_hcaptcha.py << 'PYEOF'
-          import site
+          # 🔴 关键修复：使用 uv run 确保获取的是虚拟环境 (.venv) 的路径而非系统全局路径
+          SP=$(uv run python -c "import site; print(site.getsitepackages()[0])")
+          echo "Targeting site-packages: $SP"
+          
+          COLLECTOR="${SP}/hcaptcha_challenger/agent/collector.py"
+          CHALLENGER="${SP}/hcaptcha_challenger/agent/challenger.py"
+          
+          # 1. 延长 collector 的 payload 等待时间 (10s -> 90s)
+          # 使用 sed 直接修改，避免 python 路径问题
+          sed -i 's/timeout=10/timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))/g' "$COLLECTOR"
+          
+          # 2. 用 Python 处理更复杂的 challenger.py 逻辑
+          # 将逻辑写在临时文件中运行，并传入正确的 SP 路径
+          cat > /tmp/patch_logic.py << 'PYEOF'
+          import sys
           from pathlib import Path
+          import os
 
-          sp = site.getsitepackages()[0]
+          sp = sys.argv[1]
           challenger = Path(sp) / "hcaptcha_challenger" / "agent" / "challenger.py"
-          collector = Path(sp) / "hcaptcha_challenger" / "agent" / "collector.py"
-          
-          # Patch collector: 延长 payload 等待时间（10s → 90s）
-          collector_text = collector.read_text()
-          collector_text = collector_text.replace(
-              'timeout=10\n',
-              'timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))\n'
-          )
-          collector.write_text(collector_text)
-          print("✅ Patched collector.py: timeout 10s -> 90s")
-          
-          # Patch challenger: 放宽 challenge frame URL 匹配
+          if not challenger.exists():
+              print(f"Error: {challenger} not found")
+              sys.exit(1)
+
           text = challenger.read_text()
-          old_frame = 'and child_frame.url.startswith("https://newassets.hcaptcha.com/captcha/v1/")\n                and "frame=challenge" in child_frame.url'
-          new_frame = 'and "hcaptcha.com" in (child_frame.url or "")\n                and "frame=challenge" in (child_frame.url or "")'
-          if old_frame in text:
-              text = text.replace(old_frame, new_frame, 1)
-              print("✅ Patched frame URL matching to relaxed hcaptcha.com match")
-          else:
-              print("⚠️ Frame URL pattern not found in challenger.py")
           
-          # Patch challenger: 延长 get_challenge_frame_locator 超时
+          # A. 延长 get_challenge_frame_locator 超时 (将 while True 改为带 deadline 的循环)
+          # 匹配 while True: \n            try:
           old_loop = 'while True:\n            try:'
           new_loop = 'deadline = asyncio.get_running_loop().time() + 90\n            try:\n            while time.monotonic() < deadline:'
           if old_loop in text:
               text = text.replace(old_loop, new_loop, 1)
-              print("✅ Patched frame locator with extended timeout")
-          else:
-              print("⚠️ Loop pattern not found, trying alternate...")
-              text = text.replace(
-                  'while True:',
-                  'deadline = time.monotonic() + 90\n        while time.monotonic() < deadline:',
-                  1
-              )
-              print("✅ Patched frame locator with extended timeout (alt)")
+          
+          # B. 替换循环内部的超时判定 (如果有)
+          old_break = 'if asyncio.get_running_loop().time() >= deadline:\n                break'
+          new_break = 'if time.monotonic() >= deadline:\n                break'
+          if old_break in text:
+              text = text.replace(old_break, new_break, 1)
+
+          # C. 放宽 challenge frame URL 匹配范围 (不再限制 newassets.hcaptcha.com)
+          old_frame = 'and child_frame.url.startswith("https://newassets.hcaptcha.com/captcha/v1/")\n                and "frame=challenge" in child_frame.url'
+          new_frame = 'and "hcaptcha.com" in (child_frame.url or "")\n                and "frame=challenge" in (child_frame.url or "")'
+          if old_frame in text:
+              text = text.replace(old_frame, new_frame, 1)
           
           challenger.write_text(text)
+          print("✅ hcaptcha-challenger patched successfully")
           PYEOF
           
-          python3 /tmp/patch_hcaptcha.py
-          echo "hcaptcha-challenger patched successfully"
+          uv run python /tmp/patch_logic.py "$SP"
 
       - name: Install Playwright browsers
         run: uv run playwright install firefox
 
-      # 增加 GITHUB_TOKEN 以解决 Camoufox 下载时的 403 频率限制
       - name: Install Camoufox
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,15 +131,11 @@ jobs:
           IMAGE_CLASSIFIER_THINKING_BUDGET: 192
           SPATIAL_POINT_THINKING_BUDGET: 256
           SPATIAL_PATH_THINKING_BUDGET: 320
-          # 在 Actions 中我们依靠 GitHub 的 cron 触发，所以关闭内部调度器
           ENABLE_APSCHEDULER: false
           PYTHONPATH: app
           ENABLE_AIHUBMIX_PATCH: true
-          # hcaptcha-challenger 补丁使用这些环境变量
           HCAPTCHA_PAYLOAD_TIMEOUT: "90"
           HCAPTCHA_FRAME_TIMEOUT: "90"
         run: |
-          echo "🚀 启动定时领取任务（已适配 AiHubMix 中转）..."
-          echo "GEMINI_BASE_URL=${GEMINI_BASE_URL}"
-          echo "GEMINI_MODEL=${GEMINI_MODEL}"
+          echo "🚀 启动定时领取任务..."
           xvfb-run --auto-servernum --server-num=1 --server-args='-screen 0, 1920x1080x24' uv run app/deploy.py
