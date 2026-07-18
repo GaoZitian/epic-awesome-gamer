@@ -11,8 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     
-    # 🔴 [核心修改] 只有当仓库不是 '10000ge10000/epic-awesome-gamer' 时才运行
-    # 效果：你的仓库触发定时任务会直接显示 Skipped (灰色)，别人 Fork 后会正常运行 (绿色)
     if: github.repository != '10000ge10000/epic-awesome-gamer'
 
     steps:
@@ -30,7 +28,6 @@ jobs:
           echo -n "sha256_12="
           printf "%s" "$GEMINI_API_KEY" | sha256sum | cut -c1-12
 
-    
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -54,60 +51,76 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Patch hcaptcha-challenger for robust iframe detection
+      - name: Patch hcaptcha-challenger (extend all timeouts to 90s + relaxed frame matching)
         run: |
           set -euo pipefail
-          
-          # 🔴 关键修复：使用 uv run 确保获取的是虚拟环境 (.venv) 的路径而非系统全局路径
           SP=$(uv run python -c "import site; print(site.getsitepackages()[0])")
-          echo "Targeting site-packages: $SP"
-          
+          echo "Targeting: $SP"
+
           COLLECTOR="${SP}/hcaptcha_challenger/agent/collector.py"
           CHALLENGER="${SP}/hcaptcha_challenger/agent/challenger.py"
-          
-          # 1. 延长 collector 的 payload 等待时间 (10s -> 90s)
-          # 使用 sed 直接修改，避免 python 路径问题
-          sed -i 's/timeout=10/timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))/g' "$COLLECTOR"
-          
-          # 2. 用 Python 处理更复杂的 challenger.py 逻辑
-          # 将逻辑写在临时文件中运行，并传入正确的 SP 路径
-          cat > /tmp/patch_logic.py << 'PYEOF'
+
+          # 1) collector.py: payload timeout 10s -> 90s
+          sed -i 's/timeout=10\n/timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))\n/g' "$COLLECTOR"
+          sed -i 's/timeout=10)/timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90")))/g' "$COLLECTOR"
+          echo "✅ collector.py: payload timeout -> 90s"
+
+          # 2) challenger.py: extend 3 timeout locations + relaxed frame matching
+          cat > /tmp/patch_challenger.py << 'PYEOF'
           import sys
           from pathlib import Path
-          import os
 
           sp = sys.argv[1]
-          challenger = Path(sp) / "hcaptcha_challenger" / "agent" / "challenger.py"
-          if not challenger.exists():
-              print(f"Error: {challenger} not found")
-              sys.exit(1)
+          p = Path(sp) / "hcaptcha_challenger" / "agent" / "challenger.py"
+          text = p.read_text()
+          patched = []
 
-          text = challenger.read_text()
-          
-          # A. 延长 get_challenge_frame_locator 超时 (将 while True 改为带 deadline 的循环)
-          # 匹配 while True: \n            try:
+          # A. RESPONSE_TIMEOUT: 30 -> 90
+          old = 'RESPONSE_TIMEOUT: float = Field(\n            default=30,'
+          new = 'RESPONSE_TIMEOUT: float = Field(\n            default=90,'
+          if old in text:
+              text = text.replace(old, new, 1)
+              patched.append("RESPONSE_TIMEOUT default 30->90")
+
+          # B. _review_challenge_type payload wait: timeout=30.0 -> 90.0
+          old2 = 'self._captcha_payload = await asyncio.wait_for(\n            self._captcha_payload_queue.get(), timeout=30.0\n        )'
+          new2 = 'self._captcha_payload = await asyncio.wait_for(\n            self._captcha_payload_queue.get(), timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))\n        )'
+          if old2 in text:
+              text = text.replace(old2, new2, 1)
+              patched.append("_review_challenge_type timeout 30->90")
+          else:
+              # fallback: replace any remaining timeout=30.0
+              if 'timeout=30.0' in text:
+                  text = text.replace('timeout=30.0', 'timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90"))')
+                  patched.append("timeout=30.0 -> 90 (fallback)")
+
+          # C. wait_for_challenge RESPONSE_TIMEOUT usage (already covered by A)
+          # D. get_challenge_frame_locator: add 90s deadline loop
           old_loop = 'while True:\n            try:'
           new_loop = 'deadline = asyncio.get_running_loop().time() + 90\n            try:\n            while time.monotonic() < deadline:'
           if old_loop in text:
               text = text.replace(old_loop, new_loop, 1)
-          
-          # B. 替换循环内部的超时判定 (如果有)
+              patched.append("frame locator: while True -> 90s deadline loop")
+
           old_break = 'if asyncio.get_running_loop().time() >= deadline:\n                break'
           new_break = 'if time.monotonic() >= deadline:\n                break'
           if old_break in text:
               text = text.replace(old_break, new_break, 1)
 
-          # C. 放宽 challenge frame URL 匹配范围 (不再限制 newassets.hcaptcha.com)
+          # E. Relax frame URL matching
           old_frame = 'and child_frame.url.startswith("https://newassets.hcaptcha.com/captcha/v1/")\n                and "frame=challenge" in child_frame.url'
           new_frame = 'and "hcaptcha.com" in (child_frame.url or "")\n                and "frame=challenge" in (child_frame.url or "")'
           if old_frame in text:
               text = text.replace(old_frame, new_frame, 1)
-          
-          challenger.write_text(text)
-          print("✅ hcaptcha-challenger patched successfully")
+              patched.append("frame URL: relaxed to hcaptcha.com match")
+
+          p.write_text(text)
+          for msg in patched:
+              print(f"  ✅ {msg}")
+          print(f"✅ challenger.py: {len(patched)} patches applied")
           PYEOF
-          
-          uv run python /tmp/patch_logic.py "$SP"
+
+          uv run python /tmp/patch_challenger.py "$SP"
 
       - name: Install Playwright browsers
         run: uv run playwright install firefox
