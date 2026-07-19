@@ -173,48 +173,13 @@ class EpicAuthorization:
     async def invoke(self):
         self.page.on("response", self._on_response_anything)
 
-        for attempt in range(3):
+        for _ in range(3):
             self._quota_exhausted = False
-            try:
-                await self.page.goto(URL_CLAIM, wait_until="domcontentloaded")
-            except Exception as e:
-                logger.warning(f"页面加载失败: {e}")
-                if "timeout" in str(e).lower():
-                    return False
-                continue
+            await self.page.goto(URL_CLAIM, wait_until="domcontentloaded")
 
-            # 等待页面 JS 执行完成（SPA 需要额外稳定时间）
-            await self.page.wait_for_timeout(3000)
-
-            # EULA 修正页处理
-            for eula_attempt in range(3):
-                current_url = self.page.url
-                if "correction/eula" in current_url or "corrective=" in current_url:
-                    logger.warning(f"检测到 EULA 修正页 (尝试 {eula_attempt + 1}/3)")
-                    eula_btn = "#link-success"
-                    with suppress(Exception):
-                        btn = self.page.locator(eula_btn)
-                        if await btn.is_visible(timeout=3000):
-                            await btn.click(timeout=5000)
-                            await self.page.goto(URL_CLAIM, wait_until="domcontentloaded")
-                            await self.page.wait_for_timeout(2000)
-                            continue
-                    break
-                break
-
-            # 检查登录状态（带超时和 fallback）
-            try:
-                status = await self.page.locator("//egs-navigation").get_attribute("isloggedin", timeout=15000)
-                if status == "true":
-                    logger.success("Epic Games is already logged in")
-                    return True
-            except Exception as e:
-                logger.warning(f"获取登录状态超时: {e}")
-                # fallback: 检查页面内容判断是否已登录
-                if await self._confirm_login_state_from_page():
-                    logger.success("登录状态确认成功 (fallback)")
-                    return True
-                continue
+            if "true" == await self.page.locator("//egs-navigation").get_attribute("isloggedin"):
+                logger.success("Epic Games is already logged in")
+                return True
 
             if await self._login():
                 return
@@ -222,14 +187,3 @@ class EpicAuthorization:
                 raise RuntimeError(
                     "Gemini quota exhausted (429). Stop login retries to avoid repeated failures."
                 )
-
-        logger.error("登录失败：3 次尝试后仍未成功")
-        return False
-
-    async def _confirm_login_state_from_page(self) -> bool:
-        """通过页面内容辅助判断登录状态（egs-navigation 元素不可用时的 fallback）"""
-        try:
-            content = await self.page.content()
-            return "sign-in" not in (await self.page.title()).lower() and "login" not in (await self.page.url())
-        except Exception:
-            return False
