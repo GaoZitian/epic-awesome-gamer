@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     
+    # 🔴 [核心修改] 只有当仓库不是 '10000ge10000/epic-awesome-gamer' 时才运行
+    # 效果：你的仓库触发定时任务会直接显示 Skipped (灰色)，别人 Fork 后会正常运行 (绿色)
     if: github.repository != '10000ge10000/epic-awesome-gamer'
 
     steps:
@@ -28,6 +30,7 @@ jobs:
           echo -n "sha256_12="
           printf "%s" "$GEMINI_API_KEY" | sha256sum | cut -c1-12
 
+    
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -42,35 +45,12 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libxml2-dev libxslt-dev \
-            fonts-liberation libnss3 libxcomposite1 libxdamage1 libxfixes3 \
-            libxrandr2 libgbm1 libasound2t64 libatk1.0-0 libatk-bridge2.0-0 \
-            libgtk-3-0 libnspr4 libwayland-client0 xdg-utils libdrm2 \
-            libdbus-1-3 libcups2 libatspi2.0-0 libxkbcommon0
+          sudo apt-get install -y xvfb libxml2-dev libxslt-dev
 
       - name: Install dependencies
         run: uv sync
 
-      - name: Patch hcaptcha-challenger (extend all timeouts to 90s + relaxed frame matching)
-        run: |
-          set -euo pipefail
-          SP=$(uv run python -c "import site; print(site.getsitepackages()[0])")
-          echo "Targeting: $SP"
-
-          COLLECTOR="${SP}/hcaptcha_challenger/agent/collector.py"
-          CHALLENGER="${SP}/hcaptcha_challenger/agent/challenger.py"
-
-          # 1) collector.py: payload timeout 10s -> 90s
-          sed -i 's/timeout=10)/timeout=float(os.getenv("HCAPTCHA_PAYLOAD_TIMEOUT", "90")))/g' "$COLLECTOR"
-          echo "OK collector.py: payload timeout -> 90s"
-
-          # 2) challenger.py: decode and run patch script
-          echo 'aW1wb3J0IHN5cwpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKCnNwID0gc3lzLmFyZ3ZbMV0KcCA9IFBhdGgoc3ApIC8gImhjYXB0Y2hhX2NoYWxsZW5nZXIiIC8gImFnZW50IiAvICJjaGFsbGVuZ2VyLnB5Igp0ZXh0ID0gcC5yZWFkX3RleHQoKQpwYXRjaGVkID0gW10KCiMgQS4gUkVTUE9OU0VfVElNRU9VVCBjb25maWc6IDMwIC0+IDkwCm9sZDEgPSAnICAgIFJFU1BPTlNFX1RJTUVPVVQ6IGZsb2F0ID0gRmllbGQoXG4gICAgICAgIGRlZmF1bHQ9MzAsJwpuZXcxID0gJyAgICBSRVNQT05TRV9USU1FT1VUOiBmbG9hdCA9IEZpZWxkKFxuICAgICAgICBkZWZhdWx0PTkwLCcKaWYgb2xkMSBpbiB0ZXh0OgogICAgdGV4dCA9IHRleHQucmVwbGFjZShvbGQxLCBuZXcxLCAxKQogICAgcGF0Y2hlZC5hcHBlbmQoIlJFU1BPTlNFX1RJTUVPVVQgZGVmYXVsdCAzMC0+OTAiKQoKIyBCLiBfcmV2aWV3X2NoYWxsZW5nZV90eXBlOiBoYXJkY29kZWQgdGltZW91dD0zMC4wIC0+IGVudi1jb250cm9sbGVkIDkwCm9sZDIgPSAnICAgICAgICAgICAgc2VsZi5fY2FwdGNoYV9wYXlsb2FkID0gYXdhaXQgYXN5bmNpby53YWl0X2ZvcihcbiAgICAgICAgICAgICAgICBzZWxmLl9jYXB0Y2hhX3BheWxvYWRfcXVldWUuZ2V0KCksIHRpbWVvdXQ9MzAuMFxuICAgICAgICAgICAgKScKbmV3MiA9ICcgICAgICAgICAgICBzZWxmLl9jYXB0Y2hhX3BheWxvYWQgPSBhd2FpdCBhc3luY2lvLndhaXRfZm9yKFxuICAgICAgICAgICAgICAgIHNlbGYuX2NhcHRjaGFfcGF5bG9hZF9xdWV1ZS5nZXQoKSwgdGltZW91dD1mbG9hdChvcy5nZXRlbnYoIkhDQVBUQ0hBX1BBWUxPQURfVElNRU9VVCIsICI5MCIpKVxuICAgICAgICAgICAgKScKaWYgb2xkMiBpbiB0ZXh0OgogICAgdGV4dCA9IHRleHQucmVwbGFjZShvbGQyLCBuZXcyLCAxKQogICAgcGF0Y2hlZC5hcHBlbmQoIl9yZXZpZXdfY2hhbGxlbmdlX3R5cGUgdGltZW91dCAzMC4wLT45MCIpCmVsc2U6CiAgICBpbXBvcnQgcmUKICAgIHRleHQsIGNvdW50ID0gcmUuc3VibihyJ3RpbWVvdXQ9MzBcLjAnLCAndGltZW91dD1mbG9hdChvcy5nZXRlbnYoIkhDQVBUQ0hBX1BBWUxPQURfVElNRU9VVCIsICI5MCIpKScsIHRleHQpCiAgICBpZiBjb3VudDoKICAgICAgICBwYXRjaGVkLmFwcGVuZChmInRpbWVvdXQ9MzAuMCAtPiBlbnYgZmFsbGJhY2sgKHtjb3VudH0gb2NjdXJyZW5jZXMpIikKCiMgQy4gUmVsYXggZnJhbWUgVVJMIG1hdGNoaW5nCm9sZF9mcmFtZSA9ICdhbmQgY2hpbGRfZnJhbWUudXJsLnN0YXJ0c3dpdGgoImh0dHBzOi8vbmV3YXNzZXRzLmhjYXB0Y2hhLmNvbS9jYXB0Y2hhL3YxLyIpXG4gICAgICAgICAgICAgICAgYW5kICJmcmFtZT1jaGFsbGVuZ2UiIGluIGNoaWxkX2ZyYW1lLnVybCcKbmV3X2ZyYW1lID0gJ2FuZCAiaGNhcHRjaGEuY29tIiBpbiAoY2hpbGRfZnJhbWUudXJsIG9yICIiKVxuICAgICAgICAgICAgICAgIGFuZCAiZnJhbWU9Y2hhbGxlbmdlIiBpbiAoY2hpbGRfZnJhbWUudXJsIG9yICIiKScKaWYgb2xkX2ZyYW1lIGluIHRleHQ6CiAgICB0ZXh0ID0gdGV4dC5yZXBsYWNlKG9sZF9mcmFtZSwgbmV3X2ZyYW1lLCAxKQogICAgcGF0Y2hlZC5hcHBlbmQoImZyYW1lIFVSTDogcmVsYXhlZCB0byBoY2FwdGNoYS5jb20gbWF0Y2giKQoKcC53cml0ZV90ZXh0KHRleHQpCmZvciBtc2cgaW4gcGF0Y2hlZDoKICAgIHByaW50KGYiICBPSyB7bXNnfSIpCnByaW50KGYiY2hhbGxlbmdlci5weToge2xlbihwYXRjaGVkKX0gcGF0Y2hlcyBhcHBsaWVkIikK' | base64 -d > /tmp/run_patch.py
-          uv run python /tmp/run_patch.py "$SP"
-
-      - name: Install Playwright browsers
-        run: uv run playwright install firefox
-
+      # 增加 GITHUB_TOKEN 以解决 Camoufox 下载时的 403 频率限制
       - name: Install Camoufox
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -81,8 +61,8 @@ jobs:
           EPIC_EMAIL: ${{ secrets.EPIC_EMAIL }}
           EPIC_PASSWORD: ${{ secrets.EPIC_PASSWORD }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL != '' && secrets.GEMINI_BASE_URL || 'https://aihubmix.com' }}'
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}'
+          GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL != '' && secrets.GEMINI_BASE_URL || 'https://aihubmix.com' }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL != '' && secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
           CHALLENGE_CLASSIFIER_MODEL: gemini-2.5-flash
           IMAGE_CLASSIFIER_MODEL: gemini-2.5-flash
           SPATIAL_POINT_REASONER_MODEL: gemini-2.5-flash
@@ -90,11 +70,12 @@ jobs:
           IMAGE_CLASSIFIER_THINKING_BUDGET: 192
           SPATIAL_POINT_THINKING_BUDGET: 256
           SPATIAL_PATH_THINKING_BUDGET: 320
+          # 在 Actions 中我们依靠 GitHub 的 cron 触发，所以关闭内部调度器
           ENABLE_APSCHEDULER: false
           PYTHONPATH: app
           ENABLE_AIHUBMIX_PATCH: true
-          HCAPTCHA_PAYLOAD_TIMEOUT: "90"
-          HCAPTCHA_FRAME_TIMEOUT: "90"
         run: |
-          echo "🚀 启动定时领取任务..."
+          echo "🚀 启动定时领取任务（已适配 AiHubMix 中转）..."
+          echo "GEMINI_BASE_URL=${GEMINI_BASE_URL}"
+          echo "GEMINI_MODEL=${GEMINI_MODEL}"
           xvfb-run --auto-servernum --server-num=1 --server-args='-screen 0, 1920x1080x24' uv run app/deploy.py
