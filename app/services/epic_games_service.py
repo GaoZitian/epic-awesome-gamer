@@ -726,7 +726,7 @@ class EpicGames:
             for selector in checkout_selectors:
                 try:
                     logger.debug(f"Trying checkout selector: {selector}")
-                    btn = page.locator(selector).first
+                    btn = self.page.locator(selector).first
                     if await btn.is_visible(timeout=5000):
                         await btn.click(timeout=5000, no_wait_after=True)
                         logger.debug(f"✅ Checkout clicked via: {selector}")
@@ -741,7 +741,7 @@ class EpicGames:
                 logger.warning("No standard checkout button found, scanning for any checkout-like button...")
                 try:
                     # 先尝试所有可见+enabled+含checkout文字的button/link
-                    all_buttons = page.locator("button, a, [role='button'], div[role='button']")
+                    all_buttons = self.page.locator("button, a, [role='button'], div[role='button']")
                     count = await all_buttons.count()
                     for i in range(count):
                         btn = all_buttons.nth(i)
@@ -773,7 +773,7 @@ class EpicGames:
                     ]
                     for sel in interactive_selectors:
                         try:
-                            candidates = page.locator(sel)
+                            candidates = self.page.locator(sel)
                             cnt = await candidates.count()
                             for i in range(cnt):
                                 cand = candidates.nth(i)
@@ -803,7 +803,7 @@ class EpicGames:
                 logger.warning("Still no checkout button found, dumping page DOM for debugging...")
                 try:
                     # 抓取页面内所有有 onclick 或 role 或 tabindex 的元素
-                    all_clickable = page.locator("[onclick], [role], [tabindex]")
+                    all_clickable = self.page.locator("[onclick], [role], [tabindex]")
                     clickable_count = await all_clickable.count()
                     logger.debug(f"Found {clickable_count} elements with onclick/role/tabindex")
                     for i in range(min(clickable_count, 30)):
